@@ -1,7 +1,7 @@
 """输入、思考与回复展示组件。"""
 
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
@@ -14,6 +14,7 @@ from textual.message import Message as UIMessage
 from textual.widgets import Collapsible, Static, TextArea
 
 from mycode.errors import SecretRedactor
+from mycode.models import ToolResult
 
 
 class _TerminalKey(Enum):
@@ -40,6 +41,10 @@ class TurnView:
     thinking_text: str = ""
     status: Literal["streaming", "completed", "cancelled", "failed"] = "streaming"
     error_message: str | None = None
+    summary_text: str = ""
+    summary_thinking: str = ""
+    tools: dict[str, tuple[str, ToolResult | None]] = field(default_factory=dict)
+    tool_history_saved: bool = False
 
 
 class ChatInput(TextArea):
@@ -70,6 +75,12 @@ class TurnWidget(Vertical):
         self.thinking_text = Static(classes="thinking-text", markup=False)
         self.thinking = Collapsible(self.thinking_text, title="思考过程", collapsed=False)
         self.status_text = Static(classes="turn-status", markup=False)
+        self.tools_text = Static(classes="tool-results", markup=False)
+        self.summary = Static(classes="answer-text", markup=False)
+        self.summary_thought_text = Static(classes="thinking-text", markup=False)
+        self.summary_thought = Collapsible(
+            self.summary_thought_text, title="总结思考", collapsed=False
+        )
 
     def compose(self) -> ComposeResult:
         yield Static("你", classes="role", markup=False)
@@ -77,6 +88,9 @@ class TurnWidget(Vertical):
         yield Static("MyCode", classes="role", markup=False)
         yield self.thinking
         yield self.answer
+        yield self.tools_text
+        yield self.summary_thought
+        yield self.summary
         yield self.status_text
 
     def on_mount(self) -> None:
@@ -98,6 +112,23 @@ class TurnWidget(Vertical):
         thought = self.redactor.redact(self.view.thinking_text, partial=partial)
         self.thinking_text.update(Text(safe_text(thought)))
         self.thinking.display = bool(thought)
+        lines = []
+        for name, result in self.view.tools.values():
+            state = {"success": "成功", "error": "失败", "cancelled": "取消"}
+            label = state[result.status] if result else "执行中"
+            lines.append(f"工具 {name} · {label}")
+            if result:
+                lines.append(result.to_json())
+                if result.truncated:
+                    lines.append("结果已截断，完整内容超过本次返回限制。")
+        self.tools_text.update(Text(safe_text(self.redactor.redact("\n".join(lines)))))
+        self.tools_text.display = bool(lines)
+        summary = self.redactor.redact(self.view.summary_text, partial=partial)
+        self.summary.update(Text(safe_text("总结\n" + summary if summary else "")))
+        self.summary.display = bool(summary)
+        summary_thought = self.redactor.redact(self.view.summary_thinking, partial=partial)
+        self.summary_thought_text.update(Text(safe_text(summary_thought)))
+        self.summary_thought.display = bool(summary_thought)
         labels = {
             "streaming": "生成中…",
             "completed": "已完成",
@@ -105,6 +136,12 @@ class TurnWidget(Vertical):
             "failed": "失败，本轮未计入上下文",
         }
         status = labels[self.view.status]
+        if self.view.tool_history_saved and self.view.status in {"failed", "cancelled"}:
+            status = (
+                "已取消，工具记录已保留"
+                if self.view.status == "cancelled"
+                else "失败，工具记录已保留"
+            )
         if self.view.error_message:
             status += " · " + self.view.error_message
         self.status_text.update(Text(safe_text(self.redactor.redact(status))))

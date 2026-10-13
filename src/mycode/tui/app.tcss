@@ -33,9 +33,13 @@ Screen {
     text-style: bold;
     margin-top: 1;
 }
-.user-text, .answer-text, .thinking-text {
+.user-text, .answer-text, .thinking-text, .tool-results {
     height: auto;
     width: 1fr;
+}
+.tool-results {
+    color: $text-muted;
+    margin-top: 1;
 }
 .thinking-text {
     color: $text-muted;

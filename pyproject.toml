@@ -9,6 +9,7 @@ description = "全屏终端 AI 对话助手"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "jsonschema>=4,<5",
   "textual>=8.2,<9",
   "anthropic>=0.125,<1",
   "openai>=2.54,<3",

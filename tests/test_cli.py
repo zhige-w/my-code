@@ -124,3 +124,19 @@ def test_example_config_parses():
     configs = load_config(Path(__file__).parents[1] / "mycode.example.yaml")
     assert {c.protocol for c in configs} == {"anthropic", "openai"}
     assert all(c.api_key.startswith("YOUR_") for c in configs)
+
+
+def test_tools_start_directory(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mycode.yaml").write_text(yaml.safe_dump(entries()))
+
+    class App:
+        def __init__(self, conversation, *args, **kwargs):
+            assert conversation._executor.context.working_directory == tmp_path
+            assert len(conversation._executor.registry.definitions()) == 6
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(cli, "MyCodeApp", App)
+    cli.main([])

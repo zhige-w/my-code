@@ -1,5 +1,6 @@
 """Anthropic Messages SSE 与手动 extended thinking 适配。"""
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 
@@ -11,10 +12,11 @@ from mycode.errors import ProviderError, map_provider_error
 from mycode.models import (
     Message,
     NativeContent,
-    StreamEvent,
+    ProviderEvent,
+    ResponseCompleted,
     TextDelta,
     ThinkingDelta,
-    TurnCompleted,
+    ToolCall,
 )
 from mycode.providers.base import REQUEST_TIMEOUT
 
@@ -30,8 +32,12 @@ class AnthropicProvider:
             http_client=http_client,
         )
 
-    async def stream(self, messages: Sequence[Message]) -> AsyncIterator[StreamEvent]:
+    async def stream(
+        self, messages: Sequence[Message], *, tools=(), allow_tools=False
+    ) -> AsyncIterator[ProviderEvent]:
         blocks = []
+        arguments = {}
+        calls = []
         active = set()
         started = False
         finished = False
@@ -40,14 +46,48 @@ class AnthropicProvider:
         params = {}
         if self._config.thinking:
             params["thinking"] = {"type": "enabled", "budget_tokens": 2048}
+        if tools:
+            params["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.parameters}
+                for t in tools
+            ]
+            params["tool_choice"] = {"type": "auto" if allow_tools else "none"}
         history = []
         for message in messages:
+            if message.role == "tool":
+                history.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": r.call_id,
+                                "content": r.to_json(),
+                                "is_error": r.status != "success",
+                            }
+                            for r in message.tool_results
+                        ],
+                    }
+                )
+                continue
             native = message.native_content
             content = (
                 deepcopy(native.blocks)
                 if native is not None and native.protocol == "anthropic"
                 else message.text
             )
+            if message.tool_calls and native is None:
+                content = [{"type": "text", "text": message.text}] if message.text else []
+                for call in message.tool_calls:
+                    try:
+                        parsed = json.loads(call.arguments_json)
+                        if not isinstance(parsed, dict):
+                            parsed = {}
+                    except ValueError:
+                        parsed = {}
+                    content.append(
+                        {"type": "tool_use", "id": call.id, "name": call.name, "input": parsed}
+                    )
             history.append({"role": message.role, "content": content})
         try:
             response = await self._client.messages.create(
@@ -72,10 +112,21 @@ class AnthropicProvider:
                         if not started or event.index != len(blocks) or active:
                             raise ProviderError("protocol", "响应内容块顺序异常。")
                         block = event.content_block.model_dump(mode="json", exclude_none=True)
-                        if block["type"] not in {"text", "thinking", "redacted_thinking"}:
+                        if block["type"] not in {
+                            "text",
+                            "thinking",
+                            "redacted_thinking",
+                            "tool_use",
+                        }:
                             raise ProviderError(
                                 "response", "本轮仅支持文本对话，无法处理该内容类型。"
                             )
+                        if block["type"] == "tool_use":
+                            if not allow_tools:
+                                raise ProviderError(
+                                    "protocol", "模型在禁用工具阶段返回了工具调用。"
+                                )
+                            arguments[event.index] = ""
                         blocks.append(block)
                         active.add(event.index)
                         if block["type"] == "text" and block["text"]:
@@ -99,6 +150,8 @@ class AnthropicProvider:
                                 yield ThinkingDelta(delta.thinking)
                         elif delta.type == "signature_delta" and block["type"] == "thinking":
                             block["signature"] = block.get("signature", "") + delta.signature
+                        elif delta.type == "input_json_delta" and block["type"] == "tool_use":
+                            arguments[event.index] += delta.partial_json
                         elif delta.type in {"text_delta", "thinking_delta", "signature_delta"}:
                             raise ProviderError("protocol", "响应增量与内容块类型不匹配。")
                         else:
@@ -106,6 +159,16 @@ class AnthropicProvider:
                     elif kind == "content_block_stop":
                         if event.index not in active:
                             raise ProviderError("protocol", "响应内容块重复或提前关闭。")
+                        block = blocks[event.index]
+                        if block["type"] == "tool_use":
+                            raw = arguments[event.index] or json.dumps(block.get("input", {}))
+                            calls.append(ToolCall(block.get("id", ""), block.get("name", ""), raw))
+                            try:
+                                value = json.loads(raw)
+                                json.dumps(value, allow_nan=False)
+                                block["input"] = value if isinstance(value, dict) else {}
+                            except ValueError:
+                                block["input"] = {}
                         active.remove(event.index)
                     elif kind == "message_delta":
                         if event.delta.stop_reason is not None:
@@ -113,7 +176,10 @@ class AnthropicProvider:
                     elif kind == "message_stop":
                         if not started or active or not blocks:
                             raise ProviderError("protocol", "响应内容块不完整。")
-                        if reason not in {"end_turn", "stop_sequence"}:
+                        if not (
+                            (reason in {"end_turn", "stop_sequence"} and not calls)
+                            or (reason == "tool_use" and calls)
+                        ):
                             message = (
                                 "回复达到输出上限，内容不完整，请缩短问题后重试。"
                                 if reason == "max_tokens"
@@ -127,7 +193,11 @@ class AnthropicProvider:
             raise
         except Exception as exc:
             raise map_provider_error(exc) from None
-        yield TurnCompleted(Message("assistant", text, NativeContent("anthropic", blocks)))
+        if any(not call.name for call in calls):
+            raise ProviderError("protocol", "工具调用名称缺失。")
+        yield ResponseCompleted(
+            Message("assistant", text, NativeContent("anthropic", blocks), tuple(calls))
+        )
 
     async def aclose(self) -> None:
         await self._client.close()

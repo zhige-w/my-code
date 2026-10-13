@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from mycode.config import ProviderConfig
-from mycode.models import Message, StreamEvent, TextDelta, TurnCompleted
+from mycode.models import Message, ProviderEvent, ResponseCompleted, TextDelta
 
 
 def sse(data, event=None):
@@ -182,7 +182,9 @@ class FakeProvider:
         self.stream_closed = False
         self.closed = False
 
-    async def stream(self, messages: Sequence[Message]) -> AsyncIterator[StreamEvent]:
+    async def stream(
+        self, messages: Sequence[Message], *, tools=(), allow_tools=False
+    ) -> AsyncIterator[ProviderEvent]:
         self.requests.append(tuple(messages))
         try:
             text = ""
@@ -195,9 +197,88 @@ class FakeProvider:
                 await self.release.wait()
             if self.error:
                 raise self.error
-            yield TurnCompleted(Message("assistant", text))
+            yield ResponseCompleted(Message("assistant", text))
         finally:
             self.stream_closed = True
 
     async def aclose(self):
         self.closed = True
+
+
+def openai_tool_parts(calls, *, finish="tool_calls"):
+    def chunk(delta, reason=None):
+        return sse(
+            {
+                "id": "tools",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "test-model",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": reason}],
+            }
+        )
+
+    parts = [chunk({"content": "准备执行。"})]
+    for index, (identifier, name, raw) in enumerate(calls):
+        parts.append(
+            chunk(
+                {
+                    "tool_calls": [
+                        {
+                            "index": index,
+                            "id": identifier,
+                            "type": "function",
+                            "function": {"name": name[:3], "arguments": raw[:2]},
+                        }
+                    ]
+                }
+            )
+        )
+    for index, (identifier, name, raw) in reversed(list(enumerate(calls))):
+        parts.append(
+            chunk(
+                {
+                    "tool_calls": [
+                        {"index": index, "function": {"name": name[3:], "arguments": raw[2:]}}
+                    ]
+                }
+            )
+        )
+    if finish:
+        parts.append(chunk({}, finish))
+    parts.append(sse("[DONE]"))
+    return parts
+
+
+def anthropic_tool_parts(calls, *, reason="tool_use", stop=True, thinking=False):
+    def event(kind, **fields):
+        return sse({"type": kind, **fields}, kind)
+
+    base = anthropic_parts(thinking=thinking)
+    parts = base[:8] if thinking else base[:1]
+    for index, (identifier, name, raw) in enumerate(calls, 2 if thinking else 0):
+        parts.append(
+            event(
+                "content_block_start",
+                index=index,
+                content_block={"type": "tool_use", "id": identifier, "name": name, "input": {}},
+            )
+        )
+        for fragment in (raw[:2], raw[2:]):
+            parts.append(
+                event(
+                    "content_block_delta",
+                    index=index,
+                    delta={"type": "input_json_delta", "partial_json": fragment},
+                )
+            )
+        parts.append(event("content_block_stop", index=index))
+    parts.append(
+        event(
+            "message_delta",
+            delta={"stop_reason": reason, "stop_sequence": None},
+            usage={"output_tokens": 10},
+        )
+    )
+    if stop:
+        parts.append(event("message_stop"))
+    return parts

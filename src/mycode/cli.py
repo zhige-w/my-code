@@ -11,6 +11,9 @@ from mycode.config import load_config, select_provider
 from mycode.conversation import Conversation
 from mycode.errors import ConfigError, SecretRedactor, configure_logging
 from mycode.providers import create_provider
+from mycode.tools import create_tool_registry
+from mycode.tools.base import ToolContext
+from mycode.tools.executor import ToolExecutor
 from mycode.tui.app import MyCodeApp
 
 
@@ -25,7 +28,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         redactor = SecretRedactor(config.api_key for config in configs)
         configure_logging(redactor)
         config = select_provider(configs, args.provider)
-        conversation = Conversation(create_provider(config))
+        executor = ToolExecutor(create_tool_registry(), ToolContext(Path.cwd()), redactor)
+        conversation = Conversation(create_provider(config), executor)
         MyCodeApp(conversation, config.name, config.model, redactor=redactor).run()
     except ConfigError as exc:
         print(f"配置错误：{exc}", file=sys.stderr)

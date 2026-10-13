@@ -5,12 +5,19 @@ from typing import Protocol
 
 import httpx
 
-from mycode.models import Message, StreamEvent
+from mycode.models import Message, ProviderEvent
+from mycode.tools.base import ToolDefinition
 
 REQUEST_TIMEOUT = httpx.Timeout(connect=10, read=120, write=10, pool=10)
 
 
 class Provider(Protocol):
-    def stream(self, messages: Sequence[Message]) -> AsyncIterator[StreamEvent]: ...
+    def stream(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[ToolDefinition] = (),
+        allow_tools: bool = False,
+    ) -> AsyncIterator[ProviderEvent]: ...
 
     async def aclose(self) -> None: ...

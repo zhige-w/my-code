@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 build/
+specs/
 dist/
 .DS_Store
 specs/interactive-chat/evidence/

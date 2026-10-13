@@ -9,7 +9,7 @@ from textual.widgets import Static
 
 from mycode.conversation import Conversation
 from mycode.errors import ProviderError, SecretRedactor
-from mycode.models import Message, TextDelta, ThinkingDelta, TurnCompleted
+from mycode.models import Message, ResponseCompleted, TextDelta, ThinkingDelta
 from mycode.tui.app import ConversationScroll, MyCodeApp
 from mycode.tui.widgets import ChatInput, TurnView, TurnWidget
 
@@ -129,7 +129,7 @@ async def test_layout_scroll_follow_and_pause():
             started.set()
             await gate.wait()
             yield TextDelta("\nnew content")
-            yield TurnCompleted(Message("assistant", text + "\nnew content"))
+            yield ResponseCompleted(Message("assistant", text + "\nnew content"))
 
     app = MyCodeApp(Conversation(LineProvider()), "p", "m")
     async with app.run_test(size=(80, 24)) as pilot:
@@ -305,3 +305,71 @@ async def test_worker_exit_does_not_persist_session(tmp_path, monkeypatch):
     async with next_app.run_test() as pilot:
         await submit(next_app, pilot, "口令是什么")
         assert next_provider.requests == [(Message("user", "口令是什么"),)]
+
+
+async def test_tool_view_summary_cancel(tmp_path):
+    from test_conversation import tools_conversation
+
+    from mycode.models import ToolCall
+
+    c, p = tools_conversation(
+        tmp_path, [ToolCall("a", "write_file", '{"path":"a","content":"ok"}')], summary_wait=True
+    )
+    app = MyCodeApp(c, "test", "model")
+    async with app.run_test(size=(80, 24)) as pilot:
+        await submit(app, pilot, "操作")
+        await asyncio.wait_for(p.waiting.wait(), 3)
+        await pilot.pause()
+        turn = app.turns[-1]
+        assert turn.view.tools["a"][1].status == "success"
+        assert turn.view.summary_text == "总结中"
+        assert turn.view.status == "streaming"
+        assert "write_file" in turn.tools_text.content.plain
+        await pilot.press("tab", "pageup", "ctrl+c")
+        await pilot.pause()
+        assert not app.generating and turn.view.status == "cancelled"
+        assert "工具记录已保留" in turn.status_text.content.plain
+        assert len(c.history) == 3 and (tmp_path / "a").read_text() == "ok"
+        p.summary_wait = False
+        await submit(app, pilot, "继续")
+        assert app.turns[-1].view.status == "completed"
+
+
+async def test_tool_view_control_and_truncation():
+    from mycode.models import ToolResult
+
+    view = TurnView(
+        "工具",
+        status="failed",
+        tool_history_saved=True,
+        tools={
+            "a": (
+                "read_file",
+                ToolResult("a", "read_file", "success", {"text": "secret\x1b"}, truncated=True),
+            )
+        },
+    )
+    turn = TurnWidget(view, SecretRedactor(["secret"]))
+    app = WidgetsApp(turn)
+    async with app.run_test():
+        assert "secret" not in turn.tools_text.content.plain
+        assert "truncated" in turn.tools_text.content.plain
+        assert "工具记录已保留" in turn.status_text.content.plain
+
+
+async def test_tool_view_new_turn_resumes_follow():
+    provider = FakeProvider(events=[TextDelta("long\n" * 150)])
+    app = MyCodeApp(Conversation(provider), "p", "m")
+    async with app.run_test(size=(100, 40)) as pilot:
+        await submit(app, pilot, "first")
+        scroll = app.query_one(ConversationScroll)
+        scroll.focus()
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert not scroll.follow
+        await pilot.resize_terminal(80, 24)
+        provider.events = [TextDelta("LATEST_ANSWER")]
+        await submit(app, pilot, "LATEST_QUESTION")
+        await pilot.pause()
+        assert scroll.follow and scroll.is_vertical_scroll_end
+        assert app.turns[-1].view.answer_text == "LATEST_ANSWER"

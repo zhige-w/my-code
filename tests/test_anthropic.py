@@ -7,7 +7,7 @@ import pytest
 from conftest import SSEStream, anthropic_parts, sse
 
 from mycode.errors import ProviderError
-from mycode.models import Message, TextDelta, ThinkingDelta, TurnCompleted
+from mycode.models import Message, ResponseCompleted, TextDelta, ThinkingDelta
 from mycode.providers.anthropic import AnthropicProvider
 
 
@@ -91,7 +91,7 @@ async def test_abnormal_reason(make_http, config, reason):
     with pytest.raises(ProviderError):
         async for event in provider.stream([Message("user", "hello")]):
             events.append(event)
-    assert not any(isinstance(e, TurnCompleted) for e in events)
+    assert not any(isinstance(e, ResponseCompleted) for e in events)
     assert stream.closed and len(requests) == 1
     await provider.aclose()
 
@@ -163,7 +163,7 @@ async def test_http_error_and_recovery(make_http, config, status):
         assert "thinking" in str(caught.value)
     assert len(requests) == 1
     events = [e async for e in provider.stream([Message("user", "again")])]
-    assert isinstance(events[-1], TurnCompleted)
+    assert isinstance(events[-1], ResponseCompleted)
     await provider.aclose()
 
 
@@ -192,3 +192,101 @@ async def test_cancel_and_close(make_http, config):
     assert stream.closed
     await events.aclose()
     await provider.aclose()
+
+
+async def test_tool_messages_and_fragments(make_http, config):
+    import json
+    from dataclasses import replace
+
+    from conftest import anthropic_tool_parts
+
+    from mycode.models import ToolResult, ToolResultError
+    from mycode.tools import create_tool_registry
+
+    calls = [("a", "read_file", '{"path":"中文"}'), ("b", "find_files", "{invalid")]
+    client, requests = make_http(
+        [
+            SSEStream(anthropic_tool_parts(calls, thinking=True)),
+            SSEStream(anthropic_parts(thinking=True)),
+        ]
+    )
+    provider = AnthropicProvider(
+        replace(config, protocol="anthropic", thinking=True), http_client=client
+    )
+    tools = create_tool_registry().definitions()
+    events = [
+        e async for e in provider.stream([Message("user", "工具")], tools=tools, allow_tools=True)
+    ]
+    response = events[-1].message
+    assert [(c.id, c.name, c.arguments_json) for c in response.tool_calls] == calls
+    results = (
+        ToolResult("a", "read_file", "success", {}),
+        ToolResult(
+            "b",
+            "find_files",
+            "error",
+            {"arguments_json": "{invalid"},
+            ToolResultError("invalid_arguments", "错误"),
+        ),
+    )
+    _ = [
+        e
+        async for e in provider.stream(
+            [response, Message("tool", "", tool_results=results)], tools=tools
+        )
+    ]
+    first, second = [json.loads(r.content) for r in requests]
+    assert len(first["tools"]) == 6 and first["tool_choice"] == {"type": "auto"}
+    assert second["tool_choice"] == {"type": "none"}
+    assert len(second["messages"]) == 2
+    assert [r["tool_use_id"] for r in second["messages"][1]["content"]] == ["a", "b"]
+    assert second["messages"][1]["content"][1]["is_error"]
+    blocks = second["messages"][0]["content"]
+    assert blocks[0]["signature"] == "signature-complete"
+    assert blocks[-1]["input"] == {}
+    await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "reason,stop,allow",
+    [
+        ("max_tokens", True, True),
+        ("tool_use", False, True),
+        ("end_turn", True, True),
+        ("tool_use", True, False),
+    ],
+)
+async def test_tool_invalid_stream(make_http, config, reason, stop, allow):
+    from conftest import anthropic_tool_parts
+
+    client, _ = make_http(
+        [SSEStream(anthropic_tool_parts([("a", "read_file", "{}")], reason=reason, stop=stop))]
+    )
+    provider = AnthropicProvider(config, http_client=client)
+    with pytest.raises(ProviderError):
+        _ = [e async for e in provider.stream([], allow_tools=allow)]
+    await provider.aclose()
+
+
+@pytest.mark.parametrize(
+    "mode", ["duplicate_block", "bad_index", "extra_after_finish", "unclosed_block"]
+)
+async def test_tool_protocol_order(make_http, config, mode):
+    from conftest import anthropic_tool_parts
+
+    parts = anthropic_tool_parts([("a", "read_file", "{}")])
+    if mode == "duplicate_block":
+        parts.insert(2, parts[1])
+    elif mode == "bad_index":
+        value = json.loads(parts[2].decode().split("data: ")[1])
+        value["index"] = 3
+        parts[2] = sse(value, "content_block_delta")
+    elif mode == "unclosed_block":
+        parts.pop(4)
+    else:
+        parts.append(parts[1])
+    client, _ = make_http([SSEStream(parts)])
+    p = AnthropicProvider(config, http_client=client)
+    with pytest.raises(ProviderError):
+        _ = [e async for e in p.stream([], allow_tools=True)]
+    await p.aclose()
