@@ -1,0 +1,14 @@
+# 复制为 mycode.yaml，替换模型与密钥；列表第一项是默认供应商。
+- name: claude
+  protocol: anthropic
+  model: claude-sonnet-4-6
+  base_url: https://api.anthropic.com
+  api_key: YOUR_ANTHROPIC_API_KEY
+  thinking: true
+
+- name: openai
+  protocol: openai
+  model: YOUR_OPENAI_CHAT_MODEL
+  base_url: https://api.openai.com/v1
+  api_key: YOUR_OPENAI_API_KEY
+  thinking: false

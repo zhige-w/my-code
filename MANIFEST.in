@@ -1,0 +1,4 @@
+include mycode.example.yaml
+recursive-include tests *.py
+recursive-include specs/interactive-chat *.md
+prune specs/interactive-chat/evidence

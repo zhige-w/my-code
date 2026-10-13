@@ -1,0 +1,47 @@
+Screen {
+    layout: vertical;
+    background: $background;
+}
+#status {
+    height: 1;
+    background: $primary;
+    color: $text;
+    padding: 0 1;
+}
+#conversation {
+    height: 1fr;
+    padding: 0 1;
+}
+#input {
+    height: 5;
+    min-height: 5;
+    border: round $primary;
+    margin: 0 1;
+}
+#hint {
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+}
+.turn {
+    height: auto;
+    margin-bottom: 1;
+}
+.role {
+    height: 1;
+    color: $accent;
+    text-style: bold;
+    margin-top: 1;
+}
+.user-text, .answer-text, .thinking-text {
+    height: auto;
+    width: 1fr;
+}
+.thinking-text {
+    color: $text-muted;
+}
+.turn-status {
+    height: auto;
+    color: $text-muted;
+    margin-top: 1;
+}

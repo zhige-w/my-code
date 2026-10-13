@@ -1,0 +1,11 @@
+.venv/
+mycode.yaml
+__pycache__/
+.pytest_cache/
+.idea/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.DS_Store
+specs/interactive-chat/evidence/
