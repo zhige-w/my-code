@@ -49,3 +49,24 @@ Screen {
     color: $text-muted;
     margin-top: 1;
 }
+.tool-card, .tool-iteration {
+    height: auto;
+    width: 1fr;
+}
+.tool-card {
+    border-left: solid $primary;
+    padding: 0 1;
+    margin: 1 0;
+}
+.tool-heading {
+    height: auto;
+    text-style: bold;
+    color: $accent;
+}
+.tool-parameters, .tool-detail {
+    height: auto;
+    width: 1fr;
+}
+.tool-parameters {
+    color: $text-muted;
+}

@@ -324,7 +324,7 @@ async def test_tool_view_summary_cancel(tmp_path):
         assert next(iter(turn.view.tools.values()))[1].status == "success"
         assert turn.view.iterations[2]["text"] == "总结中"
         assert turn.view.status == "streaming"
-        assert "write_file" in turn.tools_text.content.plain
+        assert "write_file" in next(iter(turn.tool_cards.values())).heading.content.plain
         await pilot.press("tab", "pageup", "ctrl+c")
         await pilot.pause()
         assert not app.generating and turn.view.status == "cancelled"
@@ -352,8 +352,11 @@ async def test_tool_view_control_and_truncation():
     turn = TurnWidget(view, SecretRedactor(["secret"]))
     app = WidgetsApp(turn)
     async with app.run_test():
-        assert "secret" not in turn.tools_text.content.plain
-        assert "truncated" in turn.tools_text.content.plain
+        await asyncio.sleep(0.05)
+        card = turn.tool_cards["a"]
+        assert "secret" not in card.result_text.content.plain
+        assert card.details.collapsed
+        assert "结果已截断" in card.heading.content.plain
         assert "工具记录已保留" in turn.status_text.content.plain
 
 
@@ -488,3 +491,101 @@ async def test_agent_events_tools_errors_no_persisted_logs(tmp_path, monkeypatch
         assert {p.name for p in tmp_path.iterdir()} == {"only-output"}
         await pilot.press("ctrl+d")
     assert {p.name for p in tmp_path.iterdir()} == {"only-output"}
+
+
+async def test_tool_cards_arguments_fold_and_refresh():
+    import json
+
+    from mycode.models import ToolResult, ToolResultError
+
+    key = ("run", 1, "same")
+    view = TurnView(
+        "任务",
+        iterations={1: {"text": "读取文件", "thinking": ""}},
+        tools={key: ("read_file", None)},
+        tool_arguments={key: json.dumps({"path": "secret.txt", "limit": 3})},
+    )
+    turn = TurnWidget(view, SecretRedactor(["secret"]))
+    app = WidgetsApp(turn)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        card = turn.tool_cards[key]
+        assert "收到，未执行" in card.heading.content.plain
+        assert "path: [密钥已隐藏].txt" in card.parameters.content.plain
+        assert "limit: 3" in card.parameters.content.plain
+        view.started.add(key)
+        turn.refresh_content()
+        await pilot.pause()
+        assert "执行中" in card.heading.content.plain
+        view.tools[key] = (
+            "read_file",
+            ToolResult("same", "read_file", "success", {"content": "RESULT_ONLY_IN_DETAILS"}),
+        )
+        turn.refresh_content()
+        await pilot.pause()
+        assert card.details.collapsed and card.details.display
+        assert "RESULT_ONLY_IN_DETAILS" not in turn.answer.content.plain
+        assert "call_id" not in card.result_text.content.plain
+        title = card.details.query_one("CollapsibleTitle")
+        title.focus()
+        await pilot.press("enter")
+        assert not card.details.collapsed
+        assert await pilot.click(title)
+        assert card.details.collapsed
+        await pilot.press("enter")
+        assert not card.details.collapsed
+        view.iterations[2] = {"text": "继续", "thinking": ""}
+        second = ("run", 2, "same")
+        view.tools[second] = (
+            "read_file",
+            ToolResult(
+                "same",
+                "read_file",
+                "error",
+                {},
+                error=ToolResultError("not_found", "不存在"),
+            ),
+        )
+        view.tool_arguments[second] = '{"path":"missing"}'
+        turn.refresh_content()
+        await pilot.pause()
+        assert not card.details.collapsed and turn.tool_cards[second].details.collapsed
+        assert "失败" in turn.tool_cards[second].heading.content.plain
+        await pilot.press("space")
+        assert card.details.collapsed
+
+
+async def test_tool_cards_long_invalid_and_cancelled():
+    import json
+
+    from mycode.models import ToolResult, ToolResultError
+
+    view = TurnView(
+        "工具",
+        tools={"a": ("write_file", None)},
+        tool_arguments={"a": json.dumps({"content": "中\n" * 2000})},
+    )
+    turn = TurnWidget(view, SecretRedactor(["secret"]))
+    app = WidgetsApp(turn)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        card = turn.tool_cards["a"]
+        assert len(card.parameters.content.plain) < 400
+        assert "参数内容已省略" in card.parameters.content.plain
+        view.tool_arguments["a"] = "{secret\x1b"
+        view.tools["a"] = (
+            "write_file",
+            ToolResult(
+                "a", "write_file", "cancelled", {}, ToolResultError("cancelled", "secret\x1b")
+            ),
+        )
+        turn.refresh_content()
+        await pilot.pause()
+        assert "无法解析" in card.parameters.content.plain
+        assert (
+            "secret" not in card.parameters.content.plain
+            and "\x1b" not in card.parameters.content.plain
+        )
+        assert "取消" in card.heading.content.plain
+        assert "secret" not in card.result_text.content.plain
+        assert card.details.collapsed

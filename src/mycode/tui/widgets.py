@@ -1,5 +1,6 @@
 """输入、思考与回复展示组件。"""
 
+import json
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,6 +45,7 @@ class TurnView:
     summary_text: str = ""
     summary_thinking: str = ""
     tools: dict[str, tuple[str, ToolResult | None]] = field(default_factory=dict)
+    tool_arguments: dict = field(default_factory=dict)
     tool_history_saved: bool = False
     iterations: dict[int, dict[str, str]] = field(default_factory=dict)
     started: set = field(default_factory=set)
@@ -67,6 +69,83 @@ class ChatInput(TextArea):
         await super()._on_key(event)
 
 
+class ToolCard(Vertical):
+    """单次调用的摘要与持久折叠结果，刷新不重建折叠状态。"""
+
+    def __init__(self, redactor):
+        super().__init__(classes="tool-card")
+        self.redactor = redactor
+        self.heading = Static(markup=False, classes="tool-heading")
+        self.parameters = Static(markup=False, classes="tool-parameters")
+        self.result_text = Static(markup=False, classes="tool-detail")
+        self.details = Collapsible(self.result_text, title="详细结果", collapsed=True)
+        self._last_update = None
+        self._rendered_result = None
+
+    def compose(self):
+        yield self.heading
+        yield self.parameters
+        yield self.details
+
+    def update_call(self, name, raw, result, started):
+        signature = (name, raw, id(result), started)
+        if signature == self._last_update:
+            return
+        self._last_update = signature
+        self._rendered_result = result
+        label = (
+            {"success": "成功", "error": "失败", "cancelled": "取消"}[result.status]
+            if result
+            else "执行中"
+            if started
+            else "收到，未执行"
+        )
+        suffix = " · 结果已截断" if result and result.truncated else ""
+        heading = f"工具 {name} · {label}{suffix}"
+        self.heading.update(Text(safe_text(self.redactor.redact(heading))))
+        try:
+            arguments = json.loads(raw) if raw is not None else None
+            if not isinstance(arguments, dict):
+                raise ValueError()
+            lines = []
+            for key, value in arguments.items():
+                rendered = (
+                    value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                )
+                rendered = self.redactor.redact(rendered).replace("\r", "\\r").replace("\n", "\\n")
+                if len(rendered) > 300:
+                    rendered = rendered[:300] + "…（参数内容已省略）"
+                lines.append(f"{key}: {rendered}")
+            parameters = "参数：\n" + ("\n".join(lines) or "（无参数）")
+        except (ValueError, TypeError):
+            parameters = "参数：" + (
+                "未提供"
+                if raw is None
+                else "无法解析\n"
+                + self.redactor.redact(raw).replace("\r", "\\r").replace("\n", "\\n")[:1000]
+            )
+        self.parameters.update(Text(safe_text(parameters)))
+        if result is None:
+            detail = "等待执行结果。"
+        else:
+            lines = []
+            if result.error:
+                lines.append(f"错误 [{result.error.code}]：{result.error.message}")
+            for key, value in result.data.items():
+                rendered = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(value, ensure_ascii=False, indent=2)
+                )
+                lines.append(f"{key}:\n{rendered}")
+            if result.truncated:
+                lines.append("结果已截断，完整内容超过本次返回限制。")
+            detail = "\n\n".join(lines) or "操作已完成，无返回内容。"
+        self.result_text.update(Text(safe_text(self.redactor.redact(detail))))
+        self.details.display = result is not None
+        self.details.title = "详细结果" if result else "详细结果（等待中）"
+
+
 class TurnWidget(Vertical):
     def __init__(self, view: TurnView, redactor: SecretRedactor | None = None) -> None:
         super().__init__(classes="turn")
@@ -77,7 +156,9 @@ class TurnWidget(Vertical):
         self.thinking_text = Static(classes="thinking-text", markup=False)
         self.thinking = Collapsible(self.thinking_text, title="思考过程", collapsed=False)
         self.status_text = Static(classes="turn-status", markup=False)
-        self.tools_text = Static(classes="tool-results", markup=False)
+        self.tools_text = Vertical(classes="tool-results")
+        self.tool_cards = {}
+        self.iteration_blocks = {}
         self.summary = Static(classes="answer-text", markup=False)
         self.summary_thought_text = Static(classes="thinking-text", markup=False)
         self.summary_thought = Collapsible(
@@ -106,20 +187,6 @@ class TurnWidget(Vertical):
             parts = []
             for number, iteration in self.view.iterations.items():
                 lines = [f"第 {number} 轮", iteration["text"]]
-                for key, (name, result) in self.view.tools.items():
-                    if isinstance(key, tuple) and key[1] == number:
-                        label = (
-                            {"success": "成功", "error": "失败", "cancelled": "取消"}[result.status]
-                            if result
-                            else "执行中"
-                            if key in self.view.started
-                            else "收到，未执行"
-                        )
-                        lines.append(f"工具 {name} · {label}")
-                        if result:
-                            lines.append(result.to_json())
-                            if result.truncated:
-                                lines.append("结果已截断。")
                 parts.append("\n".join(lines))
             body = "\n\n".join(parts)
             if len(self.view.iterations) == 1 and not self.view.tools:
@@ -144,17 +211,9 @@ class TurnWidget(Vertical):
         thought = self.redactor.redact(thought_body, partial=partial)
         self.thinking_text.update(Text(safe_text(thought)))
         self.thinking.display = bool(thought)
-        lines = []
-        for name, result in self.view.tools.values():
-            state = {"success": "成功", "error": "失败", "cancelled": "取消"}
-            label = state[result.status] if result else "执行中"
-            lines.append(f"工具 {name} · {label}")
-            if result:
-                lines.append(result.to_json())
-                if result.truncated:
-                    lines.append("结果已截断，完整内容超过本次返回限制。")
-        self.tools_text.update(Text(safe_text(self.redactor.redact("\n".join(lines)))))
-        self.tools_text.display = bool(lines) and not self.view.iterations
+        self.answer.display = not bool(self.view.tools and self.view.iterations)
+        self.tools_text.display = bool(self.view.tools)
+        self.call_after_refresh(self._sync_tools)
         summary = self.redactor.redact(self.view.summary_text, partial=partial)
         self.summary.update(Text(safe_text("总结\n" + summary if summary else "")))
         self.summary.display = bool(summary)
@@ -178,9 +237,44 @@ class TurnWidget(Vertical):
             status += " · " + self.view.error_message
         self.status_text.update(Text(safe_text(self.redactor.redact(status))))
 
+    def _sync_tools(self):
+        if not self.tools_text.is_attached or not self.view.tools:
+            return
+        numbers = list(self.view.iterations) or [0]
+        for number in numbers:
+            if number not in self.iteration_blocks:
+                text = Static(markup=False, classes="answer-text")
+                block = Vertical(text, classes="tool-iteration")
+                self.iteration_blocks[number] = (block, text)
+                self.tools_text.mount(block)
+            block, text = self.iteration_blocks[number]
+            body = self.view.iterations.get(number, {}).get("text", "")
+            title = f"第 {number} 轮\n" if number else ""
+            text.update(
+                Text(
+                    safe_text(
+                        self.redactor.redact(title + body, partial=self.view.status == "streaming")
+                    )
+                )
+            )
+            for key, (name, result) in self.view.tools.items():
+                if (key[1] if isinstance(key, tuple) else 0) != number:
+                    continue
+                if key not in self.tool_cards:
+                    card = ToolCard(self.redactor)
+                    self.tool_cards[key] = card
+                    block.mount(card)
+                self.tool_cards[key].update_call(
+                    name,
+                    self.view.tool_arguments.get(key),
+                    result,
+                    key in self.view.started or not self.view.iterations,
+                )
+
     def on_key(self, event: events.Key) -> None:
         if event.key == "space" and self.app.focused is not None:
-            if self.app.focused.parent is self.thinking:
-                self.thinking.collapsed = not self.thinking.collapsed
+            if isinstance(self.app.focused.parent, Collapsible):
+                section = self.app.focused.parent
+                section.collapsed = not section.collapsed
                 event.stop()
                 event.prevent_default()

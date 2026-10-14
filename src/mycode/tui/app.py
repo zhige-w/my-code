@@ -170,6 +170,7 @@ class MyCodeApp(App[None]):
                     elif isinstance(event, ToolCallReceived):
                         key = (event.run_id, event.iteration, event.call.id)
                         turn.view.tools[key] = (event.call.name, None)
+                        turn.view.tool_arguments[key] = event.call.arguments_json
                     elif isinstance(event, ToolStarted):
                         key = (event.run_id, event.iteration, event.call_id)
                         turn.view.tools[key] = (event.name, None)
