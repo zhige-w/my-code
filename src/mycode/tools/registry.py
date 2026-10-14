@@ -21,5 +21,8 @@ class ToolRegistry:
     def get(self, name: str) -> Tool:
         return self._tools[name]
 
-    def definitions(self) -> tuple[ToolDefinition, ...]:
-        return deepcopy(tuple(tool.definition for tool in self._tools.values()))
+    def definitions(self, *, read_only=False) -> tuple[ToolDefinition, ...]:
+        return deepcopy(tuple(
+            tool.definition for tool in self._tools.values()
+            if not read_only or tool.definition.read_only
+        ))

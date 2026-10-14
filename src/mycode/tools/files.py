@@ -159,6 +159,7 @@ class ReadFileTool:
             },
             ["path"],
         ),
+        read_only=True,
     )
 
     async def execute(self, arguments, context):

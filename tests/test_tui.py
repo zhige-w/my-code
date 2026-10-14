@@ -123,7 +123,7 @@ async def test_layout_scroll_follow_and_pause():
     started = asyncio.Event()
 
     class LineProvider(FakeProvider):
-        async def stream(self, messages):
+        async def stream(self, messages, **options):
             text = "\n".join(f"line {i}" for i in range(90))
             yield TextDelta(text)
             started.set()
@@ -254,7 +254,7 @@ async def test_cancel_cleanup_rejects_submit_and_repeated_cancel():
     cleanup_gate = asyncio.Event()
 
     class CleanupProvider(FakeProvider):
-        async def stream(self, messages):
+        async def stream(self, messages, **options):
             self.requests.append(messages)
             try:
                 yield TextDelta("partial")
@@ -321,8 +321,8 @@ async def test_tool_view_summary_cancel(tmp_path):
         await asyncio.wait_for(p.waiting.wait(), 3)
         await pilot.pause()
         turn = app.turns[-1]
-        assert turn.view.tools["a"][1].status == "success"
-        assert turn.view.summary_text == "总结中"
+        assert next(iter(turn.view.tools.values()))[1].status == "success"
+        assert turn.view.iterations[2]["text"] == "总结中"
         assert turn.view.status == "streaming"
         assert "write_file" in turn.tools_text.content.plain
         await pilot.press("tab", "pageup", "ctrl+c")
@@ -373,3 +373,118 @@ async def test_tool_view_new_turn_resumes_follow():
         await pilot.pause()
         assert scroll.follow and scroll.is_vertical_scroll_end
         assert app.turns[-1].view.answer_text == "LATEST_ANSWER"
+
+
+async def test_mode_commands_agent_events(tmp_path):
+    from test_agent_loop import SequenceProvider, call
+
+    from mycode.tools import create_tool_registry
+    from mycode.tools.base import ToolContext
+    from mycode.tools.executor import ToolExecutor
+
+    provider = SequenceProvider(
+        [
+            Message("assistant", "写 x 为完成"),
+            call("write_file", '{"path":"x","content":"完成"}'),
+            Message("assistant", "完成"),
+        ]
+    )
+    c = Conversation(provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path)))
+    app = MyCodeApp(c, "p", "m")
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "/do")
+        assert not provider.requests and "没有可执行计划" in str(
+            app.query_one("#hint", Static).content
+        )
+        await submit(app, pilot, "/plan")
+        assert not provider.requests and c.mode == "plan"
+        await submit(app, pilot, "规划")
+        assert c.latest_plan and app.turns[-1].view.status == "completed"
+        await submit(app, pilot, "/do")
+        assert (tmp_path / "x").read_text() == "完成"
+        assert len(app.turns[-1].view.iterations) == 2
+        assert "Token 不可用" in app.query_one("#status", Static).content.plain
+
+
+async def test_mode_commands_busy_cancel_exit():
+    p = FakeProvider(wait=True)
+    app = MyCodeApp(Conversation(p), "p", "m")
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "任务")
+        await submit(app, pilot, "/plan")
+        assert app.conversation.mode == "execute" and len(p.requests) == 1
+        assert "不能切换模式" in str(app.query_one("#hint", Static).content)
+        await pilot.press("ctrl+c")
+        assert app.turns[-1].view.status == "cancelled"
+
+
+async def test_iteration_view_reused_id(tmp_path):
+    from test_agent_loop import SequenceProvider, call
+
+    from mycode.tools import create_tool_registry
+    from mycode.tools.base import ToolContext
+    from mycode.tools.executor import ToolExecutor
+
+    provider = SequenceProvider(
+        [call("write_file", '{"path":"x","content":"x"}'), call(), Message("assistant", "完成")]
+    )
+    app = MyCodeApp(
+        Conversation(provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path))),
+        "p",
+        "m",
+    )
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "任务")
+        turn = app.turns[-1]
+        assert len(turn.view.tools) == 2
+        assert "第 1 轮" in turn.answer.content.plain and "第 2 轮" in turn.answer.content.plain
+        assert len(turn.view.iterations) == 3
+
+
+async def test_agent_events_usage_missing_partial_and_zero():
+    from test_agent_loop import SequenceProvider
+
+    from mycode.models import TokenUsage
+
+    provider = SequenceProvider(
+        [
+            (Message("assistant", "完成"), [TokenUsage(0, 0)]),
+            (Message("assistant", "部分"), [TokenUsage(12, None)]),
+            Message("assistant", "缺失"),
+        ]
+    )
+    app = MyCodeApp(Conversation(provider), "p", "m")
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "有效零")
+        assert "Token 0/0" in app.query_one("#status", Static).content.plain
+        assert "不完整" not in app.query_one("#status", Static).content.plain
+        await submit(app, pilot, "部分")
+        assert "不完整" in app.query_one("#status", Static).content.plain
+        await submit(app, pilot, "缺失")
+        assert "Token 不可用" in app.query_one("#status", Static).content.plain
+
+
+async def test_agent_events_tools_errors_no_persisted_logs(tmp_path, monkeypatch):
+    from test_agent_loop import SequenceProvider, call
+
+    from mycode.tools import create_tool_registry
+    from mycode.tools.base import ToolContext
+    from mycode.tools.executor import ToolExecutor
+
+    monkeypatch.chdir(tmp_path)
+    provider = SequenceProvider(
+        [
+            call("write_file", '{"path":"only-output","content":"受控"}'),
+            call("read_file", '{"path":"missing"}'),
+            Message("assistant", "完成"),
+            ProviderError("connection", "失败"),
+        ]
+    )
+    c = Conversation(provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path)))
+    app = MyCodeApp(c, "p", "m")
+    async with app.run_test() as pilot:
+        await submit(app, pilot, "写入并处理读取错误")
+        await submit(app, pilot, "模型错误")
+        assert {p.name for p in tmp_path.iterdir()} == {"only-output"}
+        await pilot.press("ctrl+d")
+    assert {p.name for p in tmp_path.iterdir()} == {"only-output"}

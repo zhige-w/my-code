@@ -45,6 +45,8 @@ class TurnView:
     summary_thinking: str = ""
     tools: dict[str, tuple[str, ToolResult | None]] = field(default_factory=dict)
     tool_history_saved: bool = False
+    iterations: dict[int, dict[str, str]] = field(default_factory=dict)
+    started: set = field(default_factory=set)
 
 
 class ChatInput(TextArea):
@@ -99,17 +101,47 @@ class TurnWidget(Vertical):
     def refresh_content(self) -> None:
         partial = self.view.status == "streaming"
         self.user.update(Text(safe_text(self.redactor.redact(self.view.user_text))))
+        body = self.view.answer_text
+        if self.view.iterations:
+            parts = []
+            for number, iteration in self.view.iterations.items():
+                lines = [f"第 {number} 轮", iteration["text"]]
+                for key, (name, result) in self.view.tools.items():
+                    if isinstance(key, tuple) and key[1] == number:
+                        label = (
+                            {"success": "成功", "error": "失败", "cancelled": "取消"}[result.status]
+                            if result
+                            else "执行中"
+                            if key in self.view.started
+                            else "收到，未执行"
+                        )
+                        lines.append(f"工具 {name} · {label}")
+                        if result:
+                            lines.append(result.to_json())
+                            if result.truncated:
+                                lines.append("结果已截断。")
+                parts.append("\n".join(lines))
+            body = "\n\n".join(parts)
+            if len(self.view.iterations) == 1 and not self.view.tools:
+                body = self.view.answer_text
         self.answer.update(
             Text(
                 safe_text(
                     self.redactor.redact(
-                        self.view.answer_text,
+                        body,
                         partial=partial,
                     )
                 )
             )
         )
-        thought = self.redactor.redact(self.view.thinking_text, partial=partial)
+        thought_body = self.view.thinking_text
+        if len(self.view.iterations) > 1:
+            thought_body = "\n\n".join(
+                f"第 {number} 轮\n{iteration['thinking']}"
+                for number, iteration in self.view.iterations.items()
+                if iteration["thinking"]
+            )
+        thought = self.redactor.redact(thought_body, partial=partial)
         self.thinking_text.update(Text(safe_text(thought)))
         self.thinking.display = bool(thought)
         lines = []
@@ -122,7 +154,7 @@ class TurnWidget(Vertical):
                 if result.truncated:
                     lines.append("结果已截断，完整内容超过本次返回限制。")
         self.tools_text.update(Text(safe_text(self.redactor.redact("\n".join(lines)))))
-        self.tools_text.display = bool(lines)
+        self.tools_text.display = bool(lines) and not self.view.iterations
         summary = self.redactor.redact(self.view.summary_text, partial=partial)
         self.summary.update(Text(safe_text("总结\n" + summary if summary else "")))
         self.summary.display = bool(summary)

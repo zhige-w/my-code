@@ -126,6 +126,7 @@ class FindFilesTool:
         "find_files",
         "按 glob 查文件，支持 **；最多200条/64KiB；跳过常见缓存目录。",
         schema({"pattern": PATH, "path": PATH}, ["pattern"]),
+        read_only=True,
     )
 
     async def execute(self, arguments, context):
@@ -145,4 +146,5 @@ class SearchCodeTool(FindFilesTool):
             },
             ["pattern"],
         ),
+        read_only=True,
     )

@@ -12,6 +12,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, JsonValue]
+    read_only: bool = False
 
 
 @dataclass(frozen=True)

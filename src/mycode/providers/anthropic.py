@@ -13,9 +13,11 @@ from mycode.models import (
     Message,
     NativeContent,
     ProviderEvent,
+    ProviderUsage,
     ResponseCompleted,
     TextDelta,
     ThinkingDelta,
+    TokenUsage,
     ToolCall,
 )
 from mycode.providers.base import REQUEST_TIMEOUT
@@ -33,7 +35,7 @@ class AnthropicProvider:
         )
 
     async def stream(
-        self, messages: Sequence[Message], *, tools=(), allow_tools=False
+        self, messages: Sequence[Message], *, tools=(), allow_tools=False, system_prompt=""
     ) -> AsyncIterator[ProviderEvent]:
         blocks = []
         arguments = {}
@@ -44,6 +46,9 @@ class AnthropicProvider:
         reason = None
         text = ""
         params = {}
+        input_tokens = output_tokens = None
+        if system_prompt:
+            params["system"] = system_prompt
         if self._config.thinking:
             params["thinking"] = {"type": "enabled", "budget_tokens": 2048}
         if tools:
@@ -108,6 +113,10 @@ class AnthropicProvider:
                         if started:
                             raise ProviderError("protocol", "响应流重复开始。")
                         started = True
+                        usage = event.message.usage
+                        input_tokens = getattr(usage, "input_tokens", None)
+                        output_tokens = getattr(usage, "output_tokens", None)
+                        yield ProviderUsage(TokenUsage(input_tokens, output_tokens))
                     elif kind == "content_block_start":
                         if not started or event.index != len(blocks) or active:
                             raise ProviderError("protocol", "响应内容块顺序异常。")
@@ -171,6 +180,12 @@ class AnthropicProvider:
                                 block["input"] = {}
                         active.remove(event.index)
                     elif kind == "message_delta":
+                        usage = event.usage
+                        if getattr(usage, "input_tokens", None) is not None:
+                            input_tokens = usage.input_tokens
+                        if getattr(usage, "output_tokens", None) is not None:
+                            output_tokens = usage.output_tokens
+                        yield ProviderUsage(TokenUsage(input_tokens, output_tokens))
                         if event.delta.stop_reason is not None:
                             reason = event.delta.stop_reason
                     elif kind == "message_stop":

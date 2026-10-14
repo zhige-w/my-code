@@ -40,3 +40,15 @@ def test_registry():
     definitions = registry.definitions()
     definitions[0].parameters["properties"].clear()
     assert registry.definitions()[0].parameters["properties"]
+
+
+def test_read_only_filter():
+    from mycode.tools import create_tool_registry
+
+    registry = create_tool_registry()
+    assert {d.name for d in registry.definitions(read_only=True)} == {
+        "read_file",
+        "find_files",
+        "search_code",
+    }
+    assert len(registry.definitions()) == 6

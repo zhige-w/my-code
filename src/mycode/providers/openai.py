@@ -7,7 +7,15 @@ from openai import AsyncOpenAI
 
 from mycode.config import ProviderConfig
 from mycode.errors import ProviderError, map_provider_error
-from mycode.models import Message, ProviderEvent, ResponseCompleted, TextDelta, ToolCall
+from mycode.models import (
+    Message,
+    ProviderEvent,
+    ProviderUsage,
+    ResponseCompleted,
+    TextDelta,
+    TokenUsage,
+    ToolCall,
+)
 from mycode.providers.base import REQUEST_TIMEOUT
 
 
@@ -23,10 +31,10 @@ class OpenAIProvider:
         )
 
     async def stream(
-        self, messages: Sequence[Message], *, tools=(), allow_tools=False
+        self, messages: Sequence[Message], *, tools=(), allow_tools=False, system_prompt=""
     ) -> AsyncIterator[ProviderEvent]:
         text, finished, calls = "", False, {}
-        history = []
+        history = [{"role": "system", "content": system_prompt}] if system_prompt else []
         for message in messages:
             if message.role == "tool":
                 history.extend(
@@ -61,10 +69,21 @@ class OpenAIProvider:
             params["tool_choice"] = "auto" if allow_tools else "none"
         try:
             response = await self._client.chat.completions.create(
-                model=self._config.model, messages=history, stream=True, **params
+                model=self._config.model,
+                messages=history,
+                stream=True,
+                stream_options={"include_usage": True},
+                **params,
             )
             async with response:
                 async for chunk in response:
+                    if chunk.usage is not None:
+                        yield ProviderUsage(
+                            TokenUsage(
+                                chunk.usage.prompt_tokens,
+                                chunk.usage.completion_tokens,
+                            )
+                        )
                     for choice in chunk.choices:
                         if choice.index != 0 or finished:
                             raise ProviderError("protocol", "响应候选或结束顺序异常。")

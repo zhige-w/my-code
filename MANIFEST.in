@@ -4,3 +4,5 @@ recursive-include specs/interactive-chat *.md
 recursive-include specs/tool-system *.md
 prune specs/tool-system/evidence
 prune specs/interactive-chat/evidence
+recursive-include specs/agent-loop *.md
+prune specs/agent-loop/evidence

@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
 
+from mycode.agent.options import AgentOptions
 from mycode.config import load_config, select_provider
 from mycode.conversation import Conversation
 from mycode.errors import ConfigError, SecretRedactor, configure_logging
@@ -29,7 +30,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         configure_logging(redactor)
         config = select_provider(configs, args.provider)
         executor = ToolExecutor(create_tool_registry(), ToolContext(Path.cwd()), redactor)
-        conversation = Conversation(create_provider(config), executor)
+        conversation = Conversation(create_provider(config), executor, options=AgentOptions())
         MyCodeApp(conversation, config.name, config.model, redactor=redactor).run()
     except ConfigError as exc:
         print(f"配置错误：{exc}", file=sys.stderr)

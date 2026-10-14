@@ -1,327 +1,254 @@
 import asyncio
+import json
 from dataclasses import replace
 
 import pytest
-from conftest import FakeProvider, SSEStream, anthropic_parts, openai_parts
+from conftest import (
+    FakeProvider,
+    SSEStream,
+    anthropic_parts,
+    anthropic_tool_parts,
+    openai_parts,
+    openai_tool_parts,
+)
+from test_agent_loop import SequenceProvider, call
 
+from mycode.agent.events import ToolFinished, ToolStarted
 from mycode.conversation import Conversation
 from mycode.errors import ProviderError
-from mycode.models import Message, NativeContent, ResponseCompleted, TextDelta, TurnCompleted
+from mycode.models import Message, NativeContent, ResponseCompleted, ToolCall
 from mycode.providers.anthropic import AnthropicProvider
 from mycode.providers.openai import OpenAIProvider
+from mycode.tools import create_tool_registry
+from mycode.tools.base import ToolContext
+from mycode.tools.executor import ToolExecutor
 
 
-async def test_history_success_and_reset():
-    provider = FakeProvider()
-    conversation = Conversation(provider)
-    events = conversation.stream_turn("口令：青竹742")
-    assert await anext(events) == TextDelta("你好")
-    assert conversation.busy and conversation.history == ()
-    completion = await anext(events)
-    assert isinstance(completion, TurnCompleted)
-    assert len(conversation.history) == 2
-    assert [e async for e in events] == []
-    assert not conversation.busy
-    _ = [e async for e in conversation.stream_turn("口令是什么")]
-    assert provider.requests[1] == (
-        Message("user", "口令：青竹742"),
-        Message("assistant", "你好"),
-        Message("user", "口令是什么"),
-    )
-    assert Conversation(FakeProvider()).history == ()
-    await conversation.aclose()
-    await conversation.aclose()
-    assert conversation.history == () and provider.closed
-
-
-async def test_history_native_copies():
-    blocks = [{"type": "text", "text": "answer"}]
-    native = NativeContent("anthropic", blocks)
-    blocks[0]["text"] = "external"
-    assert native.blocks[0]["text"] == "answer"
-
-    class NativeProvider(FakeProvider):
-        async def stream(self, messages):
-            yield ResponseCompleted(Message("assistant", "answer", native))
-
-    conversation = Conversation(NativeProvider())
-    _ = [e async for e in conversation.stream_turn("hello")]
-    native.blocks[0]["text"] = "changed"
-    snapshot = conversation.history
-    snapshot[1].native_content.blocks[0]["text"] = "changed again"
-    assert conversation.history[1].native_content.blocks[0]["text"] == "answer"
-
-
-@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
-async def test_history_real_adapters(make_http, config, protocol):
-    if protocol == "openai":
-        parts = openai_parts
-        kind = OpenAIProvider
-    else:
-        parts = anthropic_parts
-        kind = AnthropicProvider
-    client, requests = make_http([SSEStream(parts()), SSEStream(parts())])
-    provider = kind(replace(config, protocol=protocol), http_client=client)
-    conversation = Conversation(provider)
-    _ = [e async for e in conversation.stream_turn("first")]
-    _ = [e async for e in conversation.stream_turn("second")]
-    import json
-
-    messages = json.loads(requests[1].content)["messages"]
-    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
-    assert messages[0]["content"] == "first"
-    assert messages[-1]["content"] == "second"
-    await conversation.aclose()
-
-
-async def test_cancel_failure_and_recovery():
-    provider = FakeProvider()
-    conversation = Conversation(provider)
-    _ = [e async for e in conversation.stream_turn("successful")]
-    good_history = conversation.history
-    provider.wait = True
-    events = conversation.stream_turn("cancelled")
-    assert await anext(events) == TextDelta("你好")
-    pending = asyncio.create_task(anext(events))
-    await asyncio.sleep(0)
-    with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn("duplicate")]
-    pending.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await pending
-    assert not conversation.busy and provider.stream_closed
-    assert conversation.history == good_history
-    provider.wait = False
-    provider.error = ProviderError("connection", "网络异常")
-    with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn("failed")]
-    assert not conversation.busy and conversation.history == good_history
-    provider.error = None
-    _ = [e async for e in conversation.stream_turn("recovered")]
-    assert provider.requests[-1] == (*good_history, Message("user", "recovered"))
-
-
-async def test_consumer_exit_and_committed_cancel():
-    provider = FakeProvider()
-    conversation = Conversation(provider)
-    events = conversation.stream_turn("early")
-    await anext(events)
-    await events.aclose()
-    assert provider.stream_closed and not conversation.busy
-    assert conversation.history == ()
-    events = conversation.stream_turn("committed")
-    await anext(events)
-    assert isinstance(await anext(events), TurnCompleted)
-    await events.aclose()
-    assert len(conversation.history) == 2 and not conversation.busy
-
-
-async def test_blank_closed_and_missing_completion():
-    conversation = Conversation(FakeProvider())
-    with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn(" \n")]
-    assert not conversation.busy
-    await conversation.aclose()
-    with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn("hello")]
-
-    class Incomplete(FakeProvider):
-        async def stream(self, messages):
-            yield TextDelta("partial")
-
-    incomplete = Conversation(Incomplete())
-    with pytest.raises(ProviderError):
-        _ = [e async for e in incomplete.stream_turn("hello")]
-    assert incomplete.history == () and not incomplete.busy
-
-
-class BatchProvider:
+class BatchProvider(SequenceProvider):
     def __init__(self, calls, *, summary="ok", summary_wait=False):
         self.calls = tuple(calls)
-        self.requests = []
-        self.options = []
         self.summary = summary
         self.summary_wait = summary_wait
-        self.waiting = asyncio.Event()
+        super().__init__([])
 
     async def stream(self, messages, **options):
-        self.requests.append(tuple(messages))
-        self.options.append(options)
+        self.requests.append((tuple(messages), options))
         if len(self.requests) == 1:
-            yield ResponseCompleted(Message("assistant", "准备", tool_calls=self.calls))
+            yield ResponseCompleted(Message("assistant", "", tool_calls=self.calls))
         else:
-            yield TextDelta("总结中")
+            yield __import__("mycode.models", fromlist=["TextDelta"]).TextDelta("总结中")
             if self.summary_wait:
                 self.waiting.set()
                 await asyncio.Event().wait()
             if self.summary == "error":
                 raise ProviderError("connection", "模拟失败")
-            if self.summary == "tool":
-                yield ResponseCompleted(Message("assistant", "", tool_calls=self.calls))
-            else:
-                yield ResponseCompleted(Message("assistant", "总结中"))
-
-    async def aclose(self):
-        pass
+            yield ResponseCompleted(Message("assistant", "总结中"))
 
 
 def tools_conversation(tmp_path, calls, **options):
-    from mycode.tools import create_tool_registry
-    from mycode.tools.base import ToolContext
-    from mycode.tools.executor import ToolExecutor
-
-    p = BatchProvider(calls, **options)
-    return Conversation(p, ToolExecutor(create_tool_registry(), ToolContext(tmp_path))), p
+    provider = BatchProvider(calls, **options)
+    return Conversation(
+        provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path))
+    ), provider
 
 
-async def test_tool_batch(tmp_path):
-    from mycode.models import ToolCall, ToolFinished, ToolStarted
-
-    calls = [
-        ToolCall("a", "write_file", '{"path":"a","content":"青竹742"}'),
-        ToolCall("b", "read_file", '{"path":"a"}'),
-        ToolCall("c", "read_file", "{"),
-        ToolCall("d", "missing", "{}"),
-    ]
-    conversation, provider = tools_conversation(tmp_path, calls)
-    events = [e async for e in conversation.stream_turn("操作")]
-    assert [e.call_id for e in events if isinstance(e, ToolStarted)] == ["a", "b", "c", "d"]
-    results = [e.result for e in events if isinstance(e, ToolFinished)]
-    assert "青竹742" in results[1].data["content"]
-    assert results[2].error.code == "invalid_arguments"
-    assert results[3].error.code == "unknown_tool"
-    assert len(provider.requests) == 2 and not provider.options[1]["allow_tools"]
-    assert any(isinstance(e, TextDelta) and e.phase == "summary" for e in events)
-    assert len(conversation.history) == 4 and conversation.tool_history_committed
-    assert len(conversation.history[2].tool_results) == 4
-    snapshot = conversation.history
-    snapshot[2].tool_results[0].data.clear()
-    assert conversation.history[2].tool_results[0].data
+async def collect(conversation, text="任务"):
+    return [e async for e in conversation.stream_turn(text)]
 
 
-@pytest.mark.parametrize("ids", [("",), ("a", "a")])
-async def test_tool_batch_invalid_ids(tmp_path, ids):
-    from mycode.models import ToolCall
-
-    calls = [ToolCall(i, "write_file", '{"path":"bad","content":"bad"}') for i in ids]
-    conversation, provider = tools_conversation(tmp_path, calls)
-    with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn("操作")]
-    assert not (tmp_path / "bad").exists() and not conversation.history
-    assert len(provider.requests) == 1
-
-
-@pytest.mark.parametrize("summary", ["error", "tool"])
-async def test_tool_summary_failure_history(tmp_path, summary):
-    from mycode.models import ToolCall
-
-    conversation, p = tools_conversation(
-        tmp_path, [ToolCall("a", "write_file", '{"path":"a","content":"ok"}')], summary=summary
+async def test_agent_entry_history_and_reset():
+    provider = FakeProvider()
+    c = Conversation(provider)
+    events = await collect(c, "口令：青竹742")
+    assert events[-1].reason == "completed" and not c.busy
+    await collect(c, "口令是什么")
+    assert provider.requests[1] == (
+        Message("user", "口令：青竹742"),
+        Message("assistant", "你好"),
+        Message("user", "口令是什么"),
     )
+    await c.aclose()
+    await c.aclose()
+    assert not c.history and provider.closed
+
+
+async def test_agent_entry_native_copies():
+    native = NativeContent("anthropic", [{"type": "text", "text": "你好"}])
+    provider = SequenceProvider([Message("assistant", "你好", native)])
+    c = Conversation(provider)
+    await collect(c)
+    native.blocks[0].clear()
+    snapshot = c.history
+    snapshot[1].native_content.blocks[0].clear()
+    assert c.history[1].native_content.blocks[0]["text"] == "你好"
+
+
+async def test_agent_entry_blank_closed_and_busy():
+    provider = FakeProvider(wait=True)
+    c = Conversation(provider)
     with pytest.raises(ProviderError):
-        _ = [e async for e in conversation.stream_turn("操作")]
-    assert len(conversation.history) == 3 and (tmp_path / "a").read_text() == "ok"
-    p.summary = "ok"
-    _ = [e async for e in conversation.stream_turn("引用")]
-    assert p.requests[-1][2].tool_results[0].status == "success"
-    assert len(p.requests) == 3
+        await collect(c, " ")
+    task = asyncio.create_task(collect(c))
+    await provider.started.wait()
+    with pytest.raises(ProviderError):
+        await collect(c)
+    c.cancel()
+    assert (await task)[-1].reason == "cancelled"
+    assert not c.history
+    await c.aclose()
+    with pytest.raises(ProviderError):
+        await collect(c)
 
 
-async def test_tool_cancel_during_execution(tmp_path):
-    import json
+async def test_agent_entry_error_and_recovery():
+    provider = FakeProvider(error=ProviderError("connection", "网络异常"))
+    c = Conversation(provider)
+    assert (await collect(c))[-1].reason == "stream_error"
+    assert not c.history and not c.busy
+    provider.error = None
+    assert (await collect(c))[-1].reason == "completed"
 
-    from mycode.models import ToolCall, ToolStarted
 
-    calls = [
-        ToolCall("a", "write_file", '{"path":"a","content":"ok"}'),
-        ToolCall(
-            "b", "execute_command", json.dumps({"command": "echo $$ > pid; sleep 20; touch late"})
-        ),
-        ToolCall("c", "write_file", '{"path":"never","content":"bad"}'),
+async def test_plan_mode_latest_and_execute(tmp_path):
+    responses = [
+        Message("assistant", "计划一"),
+        Message("assistant", "计划二"),
+        call("write_file", '{"path":"x","content":"执行"}'),
+        Message("assistant", "完成"),
     ]
-    c, p = tools_conversation(tmp_path, calls)
-    events = c.stream_turn("操作")
-    while True:
-        e = await anext(events)
-        if isinstance(e, ToolStarted) and e.call_id == "b":
-            break
-    pending = asyncio.create_task(anext(events))
-    for _ in range(100):
-        if (tmp_path / "pid").exists():
-            break
-        await asyncio.sleep(0.01)
-    pending.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await pending
-    assert not c.busy and c.tool_history_committed
-    assert [r.status for r in c.history[2].tool_results] == ["success", "cancelled", "cancelled"]
-    assert not (tmp_path / "never").exists() and not (tmp_path / "late").exists()
-    assert len(p.requests) == 1
+    provider = SequenceProvider(responses)
+    c = Conversation(provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path)))
+    c.set_mode("plan")
+    await collect(c)
+    await collect(c)
+    assert c.mode == "plan" and c.latest_plan.reply.text == "计划二"
+    assert {t.name for t in provider.requests[0][1]["tools"]} == {
+        "read_file",
+        "find_files",
+        "search_code",
+    }
+    assert "禁止" in provider.requests[0][1]["system_prompt"]
+    events = [e async for e in c.execute_plan()]
+    assert events[-1].reason == "completed" and c.mode == "execute"
+    assert (
+        "计划二" in provider.requests[2][0][-1].text and len(provider.requests[2][1]["tools"]) == 6
+    )
+    assert (tmp_path / "x").read_text() == "执行"
 
 
-async def test_tool_cancel_summary_and_consumer_close(tmp_path):
-    from mycode.models import ToolCall, ToolStarted
+async def test_plan_mode_no_plan_busy_and_failed_plan():
+    provider = SequenceProvider(
+        [Message("assistant", "计划"), ProviderError("connection", "失败"), "wait"]
+    )
+    c = Conversation(provider)
+    c.set_mode("plan")
+    with pytest.raises(ProviderError):
+        _ = [e async for e in c.execute_plan()]
+    assert not provider.requests and c.mode == "execute"
+    c.set_mode("plan")
+    await collect(c)
+    await collect(c)
+    assert c.latest_plan.reply.text == "计划"
+    task = asyncio.create_task(collect(c))
+    await provider.waiting.wait()
+    with pytest.raises(ProviderError):
+        c.set_mode("execute")
+    c.cancel()
+    await task
+    assert c.mode == "plan" and c.latest_plan.reply.text == "计划"
 
-    calls = [ToolCall("a", "write_file", '{"path":"a","content":"ok"}')]
-    c, p = tools_conversation(tmp_path, calls, summary_wait=True)
 
-    async def consume():
-        return [e async for e in c.stream_turn("操作")]
+async def test_plan_mode_reject_side_effects(tmp_path):
+    c, provider = tools_conversation(
+        tmp_path, [ToolCall("a", "write_file", '{"path":"x","content":"x"}')]
+    )
+    c.set_mode("plan")
+    events = await collect(c)
+    assert [e.result.error.code for e in events if isinstance(e, ToolFinished)] == [
+        "mode_restricted"
+    ]
+    assert not (tmp_path / "x").exists() and c.mode == "plan"
 
-    task = asyncio.create_task(consume())
-    await asyncio.wait_for(p.waiting.wait(), 2)
+
+async def test_cleanup_explicit_and_early_exit(tmp_path):
+    c, p = tools_conversation(
+        tmp_path, [ToolCall("a", "write_file", '{"path":"x","content":"x"}')], summary_wait=True
+    )
+    task = asyncio.create_task(collect(c))
+    await asyncio.wait_for(p.waiting.wait(), 3)
+    c.cancel()
+    events = await task
+    assert events[-1].reason == "cancelled" and events[-1].history_updated
+    assert len(c.history) == 3 and (tmp_path / "x").exists()
+    p.summary_wait = False
+    assert (await collect(c))[-1].reason == "completed"
+    c, _ = tools_conversation(
+        tmp_path, [ToolCall("a", "execute_command", '{"command":"sleep 20"}')]
+    )
+    events = c.stream_turn("任务")
+    while not isinstance(await anext(events), ToolStarted):
+        pass
+    await events.aclose()
+    assert not c.busy and c.history[2].tool_results[0].status == "cancelled"
+
+
+async def test_cleanup_aclose_during_read():
+    provider = FakeProvider(wait=True)
+    c = Conversation(provider)
+    task = asyncio.create_task(collect(c))
+    await provider.started.wait()
+    await asyncio.wait_for(c.aclose(), 3)
+    assert (await task)[-1].reason == "cancelled"
+    assert provider.closed and not c.busy
+
+
+async def test_cleanup_external_cancel(tmp_path):
+    c, p = tools_conversation(
+        tmp_path, [ToolCall("a", "write_file", '{"path":"x","content":"x"}')], summary_wait=True
+    )
+    task = asyncio.create_task(collect(c))
+    await p.waiting.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert len(c.history) == 3 and c.tool_history_committed and not c.busy
-    c, p = tools_conversation(tmp_path, calls)
-    events = c.stream_turn("关闭")
-    assert isinstance(await anext(events), ToolStarted)
-    await events.aclose()
-    assert c.history[2].tool_results[0].status == "cancelled"
-    assert not c.busy
+    assert len(c.history) == 3 and not c.busy
 
 
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
-async def test_tool_batch_real_adapters(tmp_path, make_http, config, protocol):
-    import json
-
-    from conftest import anthropic_tool_parts, openai_tool_parts
-
-    from mycode.tools import create_tool_registry
-    from mycode.tools.base import ToolContext
-    from mycode.tools.executor import ToolExecutor
-
-    calls = [
-        ("a", "write_file", '{"path":"a","content":"中文"}'),
-        ("b", "read_file", '{"path":"a"}'),
-    ]
-    parts = openai_tool_parts if protocol == "openai" else anthropic_tool_parts
+async def test_agent_entry_real_adapters_multibatch(tmp_path, make_http, config, protocol):
+    tool_parts = openai_tool_parts if protocol == "openai" else anthropic_tool_parts
     ordinary = openai_parts if protocol == "openai" else anthropic_parts
     kind = OpenAIProvider if protocol == "openai" else AnthropicProvider
+    calls = [("a", "write_file", '{"path":"x","content":"中文"}')]
     client, requests = make_http(
-        [SSEStream(parts(calls)), SSEStream(ordinary()), SSEStream(ordinary())]
+        [
+            SSEStream(tool_parts(calls)),
+            SSEStream(tool_parts([("a", "read_file", '{"path":"x"}')])),
+            SSEStream(ordinary()),
+            SSEStream(ordinary()),
+        ]
     )
-    provider = kind(replace(config, protocol=protocol), http_client=client)
-    c = Conversation(provider, ToolExecutor(create_tool_registry(), ToolContext(tmp_path)))
-    _ = [e async for e in c.stream_turn("写后读")]
-    assert (tmp_path / "a").read_text() == "中文" and len(requests) == 2
-    _ = [e async for e in c.stream_turn("引用")]
-    body = json.loads(requests[-1].content)
-    assert "中文" in json.dumps(body, ensure_ascii=False)
-    assert len(requests) == 3
+    c = Conversation(
+        kind(replace(config, protocol=protocol), http_client=client),
+        ToolExecutor(create_tool_registry(), ToolContext(tmp_path)),
+    )
+    events = await collect(c)
+    assert events[-1].reason == "completed" and len(requests) == 3
+    second = json.loads(requests[1].content)
+    if protocol == "openai":
+        assert second["messages"][-1]["tool_call_id"] == "a"
+        assert second["tool_choice"] == "auto"
+    else:
+        assert second["messages"][-1]["content"][0]["tool_use_id"] == "a"
+        assert second["tool_choice"]["type"] == "auto"
+    await collect(c, "引用")
+    assert "中文" in requests[-1].content.decode()
     await c.aclose()
 
 
 @pytest.mark.parametrize("protocol", ["openai", "anthropic"])
 @pytest.mark.parametrize("mode", ["duplicate_id", "missing_id", "truncated", "cancel"])
-async def test_tool_batch_protocol_no_side_effect(tmp_path, make_http, config, protocol, mode):
-    from conftest import anthropic_tool_parts, openai_tool_parts
-
-    from mycode.tools import create_tool_registry
-    from mycode.tools.base import ToolContext
-    from mycode.tools.executor import ToolExecutor
-
+async def test_agent_entry_protocol_no_side_effect(tmp_path, make_http, config, protocol, mode):
     calls = [("a" if mode != "missing_id" else "", "write_file", '{"path":"bad","content":"bad"}')]
     if mode == "duplicate_id":
         calls.append(calls[0])
@@ -337,76 +264,72 @@ async def test_tool_batch_protocol_no_side_effect(tmp_path, make_http, config, p
         kind(replace(config, protocol=protocol), http_client=client),
         ToolExecutor(create_tool_registry(), ToolContext(tmp_path)),
     )
-
-    async def consume():
-        return [e async for e in c.stream_turn("操作")]
-
+    task = asyncio.create_task(collect(c))
     if mode == "cancel":
-        task = asyncio.create_task(consume())
-        await asyncio.wait_for(stream.waiting.wait(), 2)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    else:
-        with pytest.raises(ProviderError):
-            await consume()
-    assert c.history == () and not (tmp_path / "bad").exists()
+        await stream.waiting.wait()
+        c.cancel()
+    events = await task
+    assert events[-1].reason in {"cancelled", "stream_error", "invalid_response"}
+    assert not c.history and not (tmp_path / "bad").exists()
     await c.aclose()
 
 
-async def test_tool_cancel_between_calls(tmp_path):
-    from mycode.models import ToolCall, ToolFinished
+async def test_cleanup_concurrent_close_waits():
+    gate = asyncio.Event()
+    entered = asyncio.Event()
 
-    c, p = tools_conversation(
-        tmp_path,
-        [
-            ToolCall("a", "write_file", '{"path":"a","content":"ok"}'),
-            ToolCall("b", "write_file", '{"path":"never","content":"bad"}'),
-        ],
+    class Closing(FakeProvider):
+        async def aclose(self):
+            entered.set()
+            await gate.wait()
+            self.closed = True
+
+    p = Closing()
+    c = Conversation(p)
+    first = asyncio.create_task(c.aclose())
+    await entered.wait()
+    second = asyncio.create_task(c.aclose())
+    await asyncio.sleep(0)
+    assert not second.done()
+    gate.set()
+    await asyncio.gather(first, second)
+    assert p.closed
+
+
+@pytest.mark.parametrize(
+    "second", [Message("assistant", ""), call("write_file", '{"path":"x","content":"x"}')]
+)
+async def test_plan_mode_empty_and_limit_do_not_replace(tmp_path, second):
+    from mycode.agent.options import AgentOptions
+
+    provider = SequenceProvider([Message("assistant", "已有计划"), second])
+    c = Conversation(
+        provider,
+        ToolExecutor(create_tool_registry(), ToolContext(tmp_path)),
+        options=AgentOptions(max_iterations=1),
     )
-    events = c.stream_turn("操作")
-    while not isinstance(await anext(events), ToolFinished):
-        pass
-    await events.aclose()
-    assert c.history[2].tool_results[0].status == "success"
-    assert c.history[2].tool_results[1].status == "cancelled"
-    assert not c.history[2].tool_results[1].data.get("outcome_unknown")
-    assert not (tmp_path / "never").exists()
+    c.set_mode("plan")
+    await collect(c)
+    await collect(c)
+    assert c.latest_plan.reply.text == "已有计划" and c.mode == "plan"
+    assert not (tmp_path / "x").exists()
 
 
-async def test_tool_first_response_extra_event(tmp_path):
-    from mycode.models import ToolCall
-
-    calls = [ToolCall("a", "write_file", '{"path":"bad","content":"bad"}')]
-    c, p = tools_conversation(tmp_path, calls)
-
-    async def invalid(messages, **options):
-        yield ResponseCompleted(Message("assistant", "", tool_calls=tuple(calls)))
-        yield TextDelta("late")
-
-    p.stream = invalid
-    with pytest.raises(ProviderError):
-        _ = [e async for e in c.stream_turn("操作")]
-    assert not (tmp_path / "bad").exists() and c.history == ()
-
-
-@pytest.mark.parametrize("failed", [False, True])
-async def test_tool_cancel_known_worker_result(tmp_path, failed):
-    from mycode.models import ToolCall
-
-    c, p = tools_conversation(tmp_path, [ToolCall("a", "write_file", '{"path":"a","content":"x"}')])
-
-    async def known(call):
-        error = asyncio.CancelledError()
-        error.result_frame = {
-            "data": {"known": True},
-            "error": {"code": "file_changed", "message": "已变化"} if failed else None,
-        }
-        raise error
-
-    c._executor.execute = known
-    with pytest.raises(asyncio.CancelledError):
-        _ = [e async for e in c.stream_turn("操作")]
-    result = c.history[2].tool_results[0]
-    assert result.status == ("error" if failed else "success")
-    assert result.data == {"known": True}
+async def test_plan_mode_all_side_effects_and_no_unknown_limit(tmp_path):
+    calls = Message(
+        "assistant",
+        "",
+        tool_calls=(
+            ToolCall("a", "write_file", '{"path":"x","content":"x"}'),
+            ToolCall("b", "edit_file", '{"path":"x","old_text":"x","new_text":"y"}'),
+            ToolCall("c", "execute_command", '{"command":"touch x"}'),
+        ),
+    )
+    p = SequenceProvider([calls, calls, calls, Message("assistant", "计划")])
+    c = Conversation(p, ToolExecutor(create_tool_registry(), ToolContext(tmp_path)))
+    c.set_mode("plan")
+    events = await collect(c)
+    assert events[-1].reason == "completed" and len(p.requests) == 4
+    results = [e.result for e in events if isinstance(e, ToolFinished)]
+    assert len(results) == 9 and all(r.error.code == "mode_restricted" for r in results)
+    assert not list(tmp_path.iterdir())

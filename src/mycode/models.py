@@ -90,3 +90,22 @@ class TurnCompleted:
 
 ProviderEvent: TypeAlias = TextDelta | ThinkingDelta | ResponseCompleted
 StreamEvent: TypeAlias = TextDelta | ThinkingDelta | ToolStarted | ToolFinished | TurnCompleted
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    def __post_init__(self):
+        for value in (self.input_tokens, self.output_tokens):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError("Token 用量必须为非负整数或缺失值。")
+
+
+@dataclass(frozen=True)
+class ProviderUsage:
+    usage: TokenUsage
+
+
+ProviderEvent: TypeAlias = TextDelta | ThinkingDelta | ProviderUsage | ResponseCompleted

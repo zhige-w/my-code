@@ -1,0 +1,281 @@
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=77
+* Getting build dependencies for sdist...
+running egg_info
+writing src/mycode.egg-info/PKG-INFO
+writing dependency_links to src/mycode.egg-info/dependency_links.txt
+writing entry points to src/mycode.egg-info/entry_points.txt
+writing requirements to src/mycode.egg-info/requires.txt
+writing top-level names to src/mycode.egg-info/top_level.txt
+reading manifest file 'src/mycode.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+no previously-included directories found matching 'specs/tool-system/evidence'
+no previously-included directories found matching 'specs/interactive-chat/evidence'
+no previously-included directories found matching 'specs/agent-loop/evidence'
+writing manifest file 'src/mycode.egg-info/SOURCES.txt'
+* Installed build dependency versions:
+  - setuptools==84.0.0
+* Building sdist...
+running sdist
+running egg_info
+writing src/mycode.egg-info/PKG-INFO
+writing dependency_links to src/mycode.egg-info/dependency_links.txt
+writing entry points to src/mycode.egg-info/entry_points.txt
+writing requirements to src/mycode.egg-info/requires.txt
+writing top-level names to src/mycode.egg-info/top_level.txt
+reading manifest file 'src/mycode.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+no previously-included directories found matching 'specs/tool-system/evidence'
+no previously-included directories found matching 'specs/interactive-chat/evidence'
+no previously-included directories found matching 'specs/agent-loop/evidence'
+writing manifest file 'src/mycode.egg-info/SOURCES.txt'
+running check
+creating mycode-0.1.0
+creating mycode-0.1.0/specs/agent-loop
+creating mycode-0.1.0/specs/interactive-chat
+creating mycode-0.1.0/specs/tool-system
+creating mycode-0.1.0/src/mycode
+creating mycode-0.1.0/src/mycode.egg-info
+creating mycode-0.1.0/src/mycode/agent
+creating mycode-0.1.0/src/mycode/providers
+creating mycode-0.1.0/src/mycode/tools
+creating mycode-0.1.0/src/mycode/tui
+creating mycode-0.1.0/tests
+copying files to mycode-0.1.0...
+copying MANIFEST.in -> mycode-0.1.0
+copying README.md -> mycode-0.1.0
+copying mycode.example.yaml -> mycode-0.1.0
+copying pyproject.toml -> mycode-0.1.0
+copying specs/agent-loop/checklist.md -> mycode-0.1.0/specs/agent-loop
+copying specs/agent-loop/plan.md -> mycode-0.1.0/specs/agent-loop
+copying specs/agent-loop/spec.md -> mycode-0.1.0/specs/agent-loop
+copying specs/agent-loop/task.md -> mycode-0.1.0/specs/agent-loop
+copying specs/interactive-chat/checklist.md -> mycode-0.1.0/specs/interactive-chat
+copying specs/interactive-chat/plan.md -> mycode-0.1.0/specs/interactive-chat
+copying specs/interactive-chat/spec.md -> mycode-0.1.0/specs/interactive-chat
+copying specs/interactive-chat/task.md -> mycode-0.1.0/specs/interactive-chat
+copying specs/tool-system/checklist.md -> mycode-0.1.0/specs/tool-system
+copying specs/tool-system/plan.md -> mycode-0.1.0/specs/tool-system
+copying specs/tool-system/spec.md -> mycode-0.1.0/specs/tool-system
+copying specs/tool-system/task.md -> mycode-0.1.0/specs/tool-system
+copying src/mycode/__init__.py -> mycode-0.1.0/src/mycode
+copying src/mycode/__main__.py -> mycode-0.1.0/src/mycode
+copying src/mycode/cli.py -> mycode-0.1.0/src/mycode
+copying src/mycode/config.py -> mycode-0.1.0/src/mycode
+copying src/mycode/conversation.py -> mycode-0.1.0/src/mycode
+copying src/mycode/errors.py -> mycode-0.1.0/src/mycode
+copying src/mycode/models.py -> mycode-0.1.0/src/mycode
+copying src/mycode.egg-info/PKG-INFO -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode.egg-info/SOURCES.txt -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode.egg-info/dependency_links.txt -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode.egg-info/entry_points.txt -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode.egg-info/requires.txt -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode.egg-info/top_level.txt -> mycode-0.1.0/src/mycode.egg-info
+copying src/mycode/agent/__init__.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/collector.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/events.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/history.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/loop.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/mode.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/agent/options.py -> mycode-0.1.0/src/mycode/agent
+copying src/mycode/providers/__init__.py -> mycode-0.1.0/src/mycode/providers
+copying src/mycode/providers/anthropic.py -> mycode-0.1.0/src/mycode/providers
+copying src/mycode/providers/base.py -> mycode-0.1.0/src/mycode/providers
+copying src/mycode/providers/openai.py -> mycode-0.1.0/src/mycode/providers
+copying src/mycode/tools/__init__.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/base.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/command.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/executor.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/files.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/process.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/registry.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/scheduler.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/search.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tools/worker.py -> mycode-0.1.0/src/mycode/tools
+copying src/mycode/tui/__init__.py -> mycode-0.1.0/src/mycode/tui
+copying src/mycode/tui/app.py -> mycode-0.1.0/src/mycode/tui
+copying src/mycode/tui/app.tcss -> mycode-0.1.0/src/mycode/tui
+copying src/mycode/tui/widgets.py -> mycode-0.1.0/src/mycode/tui
+copying tests/conftest.py -> mycode-0.1.0/tests
+copying tests/package_tools.py -> mycode-0.1.0/tests
+copying tests/test_agent_collector.py -> mycode-0.1.0/tests
+copying tests/test_agent_history.py -> mycode-0.1.0/tests
+copying tests/test_agent_loop.py -> mycode-0.1.0/tests
+copying tests/test_anthropic.py -> mycode-0.1.0/tests
+copying tests/test_cli.py -> mycode-0.1.0/tests
+copying tests/test_config.py -> mycode-0.1.0/tests
+copying tests/test_conversation.py -> mycode-0.1.0/tests
+copying tests/test_errors.py -> mycode-0.1.0/tests
+copying tests/test_openai.py -> mycode-0.1.0/tests
+copying tests/test_tools_executor.py -> mycode-0.1.0/tests
+copying tests/test_tools_files.py -> mycode-0.1.0/tests
+copying tests/test_tools_process.py -> mycode-0.1.0/tests
+copying tests/test_tools_registry.py -> mycode-0.1.0/tests
+copying tests/test_tools_scheduler.py -> mycode-0.1.0/tests
+copying tests/test_tools_search.py -> mycode-0.1.0/tests
+copying tests/test_tui.py -> mycode-0.1.0/tests
+copying tests/tmux_agent.py -> mycode-0.1.0/tests
+copying tests/tmux_real.py -> mycode-0.1.0/tests
+copying tests/tmux_smoke.py -> mycode-0.1.0/tests
+copying tests/tmux_tools.py -> mycode-0.1.0/tests
+Writing mycode-0.1.0/setup.cfg
+Creating tar archive
+removing 'mycode-0.1.0' (and everything under it)
+* Building wheel from sdist
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=77
+* Getting build dependencies for wheel...
+running egg_info
+writing src/mycode.egg-info/PKG-INFO
+writing dependency_links to src/mycode.egg-info/dependency_links.txt
+writing entry points to src/mycode.egg-info/entry_points.txt
+writing requirements to src/mycode.egg-info/requires.txt
+writing top-level names to src/mycode.egg-info/top_level.txt
+reading manifest file 'src/mycode.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+no previously-included directories found matching 'specs/tool-system/evidence'
+no previously-included directories found matching 'specs/interactive-chat/evidence'
+no previously-included directories found matching 'specs/agent-loop/evidence'
+writing manifest file 'src/mycode.egg-info/SOURCES.txt'
+* Installed build dependency versions:
+  - setuptools==84.0.0
+* Building wheel...
+running bdist_wheel
+running build
+running build_py
+creating build/lib/mycode
+copying src/mycode/config.py -> build/lib/mycode
+copying src/mycode/models.py -> build/lib/mycode
+copying src/mycode/conversation.py -> build/lib/mycode
+copying src/mycode/__init__.py -> build/lib/mycode
+copying src/mycode/cli.py -> build/lib/mycode
+copying src/mycode/errors.py -> build/lib/mycode
+copying src/mycode/__main__.py -> build/lib/mycode
+creating build/lib/mycode/tools
+copying src/mycode/tools/worker.py -> build/lib/mycode/tools
+copying src/mycode/tools/files.py -> build/lib/mycode/tools
+copying src/mycode/tools/command.py -> build/lib/mycode/tools
+copying src/mycode/tools/registry.py -> build/lib/mycode/tools
+copying src/mycode/tools/__init__.py -> build/lib/mycode/tools
+copying src/mycode/tools/search.py -> build/lib/mycode/tools
+copying src/mycode/tools/process.py -> build/lib/mycode/tools
+copying src/mycode/tools/scheduler.py -> build/lib/mycode/tools
+copying src/mycode/tools/base.py -> build/lib/mycode/tools
+copying src/mycode/tools/executor.py -> build/lib/mycode/tools
+creating build/lib/mycode/tui
+copying src/mycode/tui/__init__.py -> build/lib/mycode/tui
+copying src/mycode/tui/widgets.py -> build/lib/mycode/tui
+copying src/mycode/tui/app.py -> build/lib/mycode/tui
+creating build/lib/mycode/providers
+copying src/mycode/providers/__init__.py -> build/lib/mycode/providers
+copying src/mycode/providers/openai.py -> build/lib/mycode/providers
+copying src/mycode/providers/anthropic.py -> build/lib/mycode/providers
+copying src/mycode/providers/base.py -> build/lib/mycode/providers
+creating build/lib/mycode/agent
+copying src/mycode/agent/options.py -> build/lib/mycode/agent
+copying src/mycode/agent/events.py -> build/lib/mycode/agent
+copying src/mycode/agent/collector.py -> build/lib/mycode/agent
+copying src/mycode/agent/__init__.py -> build/lib/mycode/agent
+copying src/mycode/agent/mode.py -> build/lib/mycode/agent
+copying src/mycode/agent/loop.py -> build/lib/mycode/agent
+copying src/mycode/agent/history.py -> build/lib/mycode/agent
+running egg_info
+writing src/mycode.egg-info/PKG-INFO
+writing dependency_links to src/mycode.egg-info/dependency_links.txt
+writing entry points to src/mycode.egg-info/entry_points.txt
+writing requirements to src/mycode.egg-info/requires.txt
+writing top-level names to src/mycode.egg-info/top_level.txt
+reading manifest file 'src/mycode.egg-info/SOURCES.txt'
+reading manifest template 'MANIFEST.in'
+no previously-included directories found matching 'specs/tool-system/evidence'
+no previously-included directories found matching 'specs/interactive-chat/evidence'
+no previously-included directories found matching 'specs/agent-loop/evidence'
+writing manifest file 'src/mycode.egg-info/SOURCES.txt'
+copying src/mycode/tui/app.tcss -> build/lib/mycode/tui
+installing to build/bdist.macosx-26.0-arm64/wheel
+running install
+running install_lib
+creating build/bdist.macosx-26.0-arm64/wheel
+creating build/bdist.macosx-26.0-arm64/wheel/mycode
+creating build/bdist.macosx-26.0-arm64/wheel/mycode/tools
+copying build/lib/mycode/tools/worker.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/files.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/command.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/registry.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/__init__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/search.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/process.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/scheduler.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/base.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/tools/executor.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tools
+copying build/lib/mycode/config.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+copying build/lib/mycode/models.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+creating build/bdist.macosx-26.0-arm64/wheel/mycode/tui
+copying build/lib/mycode/tui/app.tcss -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tui
+copying build/lib/mycode/tui/__init__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tui
+copying build/lib/mycode/tui/widgets.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tui
+copying build/lib/mycode/tui/app.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/tui
+copying build/lib/mycode/conversation.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+creating build/bdist.macosx-26.0-arm64/wheel/mycode/providers
+copying build/lib/mycode/providers/__init__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/providers
+copying build/lib/mycode/providers/openai.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/providers
+copying build/lib/mycode/providers/anthropic.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/providers
+copying build/lib/mycode/providers/base.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/providers
+copying build/lib/mycode/__init__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+creating build/bdist.macosx-26.0-arm64/wheel/mycode/agent
+copying build/lib/mycode/agent/options.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/events.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/collector.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/__init__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/mode.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/loop.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/agent/history.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode/agent
+copying build/lib/mycode/cli.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+copying build/lib/mycode/errors.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+copying build/lib/mycode/__main__.py -> build/bdist.macosx-26.0-arm64/wheel/./mycode
+running install_egg_info
+Copying src/mycode.egg-info to build/bdist.macosx-26.0-arm64/wheel/./mycode-0.1.0-py3.14.egg-info
+running install_scripts
+creating build/bdist.macosx-26.0-arm64/wheel/mycode-0.1.0.dist-info/WHEEL
+creating '/Users/zhige/workspace/my-code/dist/.tmp-0n327ze3/mycode-0.1.0-py3-none-any.whl' and adding 'build/bdist.macosx-26.0-arm64/wheel' to it
+adding 'mycode/__init__.py'
+adding 'mycode/__main__.py'
+adding 'mycode/cli.py'
+adding 'mycode/config.py'
+adding 'mycode/conversation.py'
+adding 'mycode/errors.py'
+adding 'mycode/models.py'
+adding 'mycode/agent/__init__.py'
+adding 'mycode/agent/collector.py'
+adding 'mycode/agent/events.py'
+adding 'mycode/agent/history.py'
+adding 'mycode/agent/loop.py'
+adding 'mycode/agent/mode.py'
+adding 'mycode/agent/options.py'
+adding 'mycode/providers/__init__.py'
+adding 'mycode/providers/anthropic.py'
+adding 'mycode/providers/base.py'
+adding 'mycode/providers/openai.py'
+adding 'mycode/tools/__init__.py'
+adding 'mycode/tools/base.py'
+adding 'mycode/tools/command.py'
+adding 'mycode/tools/executor.py'
+adding 'mycode/tools/files.py'
+adding 'mycode/tools/process.py'
+adding 'mycode/tools/registry.py'
+adding 'mycode/tools/scheduler.py'
+adding 'mycode/tools/search.py'
+adding 'mycode/tools/worker.py'
+adding 'mycode/tui/__init__.py'
+adding 'mycode/tui/app.py'
+adding 'mycode/tui/app.tcss'
+adding 'mycode/tui/widgets.py'
+adding 'mycode-0.1.0.dist-info/METADATA'
+adding 'mycode-0.1.0.dist-info/WHEEL'
+adding 'mycode-0.1.0.dist-info/entry_points.txt'
+adding 'mycode-0.1.0.dist-info/top_level.txt'
+adding 'mycode-0.1.0.dist-info/RECORD'
+removing build/bdist.macosx-26.0-arm64/wheel
+Successfully built mycode-0.1.0.tar.gz and mycode-0.1.0-py3-none-any.whl

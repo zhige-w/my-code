@@ -51,6 +51,7 @@ async def test_streaming_real_sdk(make_http, config):
         "model": "test-model",
         "messages": [{"role": "user", "content": "你好"}],
         "stream": True,
+        "stream_options": {"include_usage": True},
     }
     await provider.aclose()
     assert client.is_closed
@@ -195,3 +196,29 @@ async def test_tool_protocol_order(make_http, config, mode):
     with pytest.raises(ProviderError):
         _ = [e async for e in p.stream([], allow_tools=True)]
     await p.aclose()
+
+
+async def test_usage_system_and_tail(make_http, config):
+    from mycode.models import ProviderUsage
+
+    parts = openai_parts()
+    parts.insert(
+        -1,
+        sse(
+            {
+                "id": "u",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "test",
+                "choices": [],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+            }
+        ),
+    )
+    client, requests = make_http([SSEStream(parts)])
+    provider = OpenAIProvider(config, http_client=client)
+    events = [e async for e in provider.stream([Message("user", "任务")], system_prompt="规划")]
+    assert events[-2].usage.input_tokens == 12 and isinstance(events[-2], ProviderUsage)
+    assert isinstance(events[-1], ResponseCompleted)
+    assert json.loads(requests[0].content)["messages"][0] == {"role": "system", "content": "规划"}
+    await provider.aclose()

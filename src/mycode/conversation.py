@@ -1,181 +1,126 @@
-"""单批工具执行、单次总结及会话历史生命周期。"""
+"""会话、模式与单运行生命周期。"""
 
 import asyncio
-from collections.abc import AsyncIterator
 from contextlib import aclosing
 from copy import deepcopy
-from dataclasses import replace
 
+from mycode.agent.events import RunFinished
+from mycode.agent.history import HistoryStore
+from mycode.agent.loop import AgentLoop
+from mycode.agent.mode import PlanSnapshot
+from mycode.agent.options import AgentOptions
 from mycode.errors import ProviderError
-from mycode.models import (
-    Message,
-    ResponseCompleted,
-    StreamEvent,
-    TextDelta,
-    ThinkingDelta,
-    ToolFinished,
-    ToolResult,
-    ToolResultError,
-    ToolStarted,
-    TurnCompleted,
-)
-from mycode.providers.base import Provider
+from mycode.models import Message
+from mycode.tools.scheduler import ToolScheduler
 
 
 class Conversation:
-    def __init__(self, provider: Provider, executor=None) -> None:
+    def __init__(self, provider, executor=None, *, options=None):
         self._provider = provider
         self._executor = executor
-        self._history: list[Message] = []
-        self._busy = False
-        self._closed = False
-        self._phase = "idle"
-        self._tool_history_committed = False
-        self._tool_results = []
+        self._history = HistoryStore()
+        self.options = options or AgentOptions()
+        self._loop = AgentLoop(
+            provider,
+            ToolScheduler(executor, self.options.max_read_concurrency) if executor else None,
+            self.options,
+        )
+        self._busy = self._closed = self._reading = False
+        self._stream = None
+        self._cancel = asyncio.Event()
+        self._done = asyncio.Event()
+        self._done.set()
+        self._close_done = asyncio.Event()
+        self._mode = "execute"
+        self._latest_plan = None
 
     @property
-    def history(self) -> tuple[Message, ...]:
-        return deepcopy(tuple(self._history))
+    def history(self):
+        return self._history.snapshot()
 
     @property
-    def tool_results(self):
-        return deepcopy(tuple(self._tool_results))
-
-    @property
-    def phase(self):
-        return self._phase
-
-    @property
-    def tool_history_committed(self):
-        return self._tool_history_committed
-
-    @property
-    def busy(self) -> bool:
+    def busy(self):
         return self._busy
 
-    async def stream_turn(self, user_text: str) -> AsyncIterator[StreamEvent]:
-        if self._closed:
-            raise ProviderError("response", "会话已关闭。")
+    @property
+    def mode(self):
+        return self._mode
+
+    @property
+    def latest_plan(self):
+        return deepcopy(self._latest_plan)
+
+    def set_mode(self, mode):
+        if self._busy or self._closed:
+            raise ProviderError("response", "运行期间或关闭后不能切换模式。")
+        if mode not in {"plan", "execute"}:
+            raise ValueError("未知模式。")
+        self._mode = mode
+
+    def cancel(self):
         if self._busy:
-            raise ProviderError("response", "当前回复尚未结束，请稍后发送。")
-        if not user_text.strip():
-            raise ProviderError("response", "请输入非空问题。")
+            self._cancel.set()
+
+    async def stream_turn(self, user_text):
+        if self._closed or self._busy or not user_text.strip():
+            raise ProviderError("response", "会话已关闭、当前任务未结束或输入为空。")
         self._busy = True
-        self._phase = "initial"
-        self._tool_history_committed = False
-        self._tool_results = []
-        user = Message("user", user_text)
-        response = None
-        batch_started = False
-        cancellation = None
-        current_active = False
-        definitions = self._executor.registry.definitions() if self._executor else ()
-
-        def commit_batch():
-            if not self.tool_history_committed:
-                self._history.extend(
-                    deepcopy(
-                        (
-                            user,
-                            response,
-                            Message("tool", "", tool_results=tuple(self._tool_results)),
-                        )
-                    )
-                )
-                self._tool_history_committed = True
-
+        self._done.clear()
+        self._cancel = asyncio.Event()
+        mode = self._mode
+        stream = self._loop.run(user_text, history=self._history, mode=mode, cancel=self._cancel)
+        self._stream = stream
         try:
-            # 两个阶段显式编排；这里不根据模型结果进入循环。
-            options = {"tools": definitions, "allow_tools": True} if self._executor else {}
-            async with aclosing(self._provider.stream((*self.history, user), **options)) as events:
-                async for event in events:
-                    if response is not None:
-                        raise ProviderError("protocol", "模型完成后返回了额外事件。")
-                    if isinstance(event, ResponseCompleted):
-                        response = event.message
-                    else:
-                        yield event
-            if response is None or response.role != "assistant":
-                raise ProviderError("protocol", "回复未完整结束或角色异常，本轮未计入历史。")
-            calls = response.tool_calls
-            if not calls:
-                self._history.extend(deepcopy((user, response)))
-                yield TurnCompleted(response)
-                return
-            if not self._executor:
-                raise ProviderError("protocol", "当前会话没有工具执行器。")
-            ids = [c.id for c in calls]
-            if any(not i.strip() for i in ids) or len(set(ids)) != len(ids):
-                raise ProviderError("protocol", "工具调用 ID 缺失或重复，本批未执行。")
-            # 批次入口提供取消检查点；进入后始终补齐结果再提交历史。
-            await asyncio.sleep(0)
-            self._phase = "tools"
-            batch_started = True
-            for call in calls:
-                yield ToolStarted(call.id, call.name)
-                current_active = True
-                result = await self._executor.execute(call)
-                self._tool_results.append(result)
-                current_active = False
-                yield ToolFinished(result)
-                await asyncio.sleep(0)
-            commit_batch()
-            self._phase = "summary"
-            summary = None
-            async with aclosing(
-                self._provider.stream(self.history, tools=definitions, allow_tools=False)
-            ) as events:
-                async for event in events:
-                    if summary is not None:
-                        raise ProviderError("protocol", "总结完成后返回了额外事件。")
-                    if isinstance(event, ResponseCompleted):
-                        summary = event.message
-                    elif isinstance(event, (TextDelta, ThinkingDelta)):
-                        yield replace(event, phase="summary")
-            if summary is None or summary.role != "assistant" or summary.tool_calls:
-                raise ProviderError("protocol", "总结不完整或返回了禁用的工具调用。")
-            self._history.append(deepcopy(summary))
-            yield TurnCompleted(summary)
-        except asyncio.CancelledError as exc:
-            cancellation = exc
-            raise
+            while True:
+                self._reading = True
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    break
+                finally:
+                    self._reading = False
+                if isinstance(event, RunFinished):
+                    if (
+                        mode == "plan"
+                        and event.reason == "completed"
+                        and event.message.text.strip()
+                    ):
+                        self._latest_plan = PlanSnapshot(Message("user", user_text), event.message)
+                    self._busy = False
+                    self._done.set()
+                yield event
         finally:
-            if batch_started and not self.tool_history_committed:
-                for index, call in enumerate(response.tool_calls[len(self._tool_results) :]):
-                    data = getattr(cancellation, "result_data", {}) if index == 0 else {}
-                    if index == 0 and current_active and call.name in {"write_file", "edit_file"}:
-                        data = {**data, "outcome_unknown": True}
-                    frame = getattr(cancellation, "result_frame", None) if index == 0 else None
-                    if frame:
-                        error = frame.get("error")
-                        result = ToolResult(
-                            call.id,
-                            call.name,
-                            "error" if error else "success",
-                            frame.get("data", {}),
-                            ToolResultError(error["code"], error["message"]) if error else None,
-                            truncated=frame.get("truncated", False),
-                        )
-                    else:
-                        message = (
-                            "执行已取消；操作可能已生效，请重新读取确认。"
-                            if data.get("outcome_unknown")
-                            else "执行已取消。"
-                        )
-                        result = ToolResult(
-                            call.id,
-                            call.name,
-                            "cancelled",
-                            data,
-                            ToolResultError("cancelled", message),
-                        )
-                    self._tool_results.append(result)
-                commit_batch()
-            self._busy = False
-            self._phase = "idle"
+            await stream.aclose()
+            if self._stream is stream:
+                self._stream = None
+                self._busy = False
+                self._done.set()
 
-    async def aclose(self) -> None:
-        if not self._closed:
+    async def execute_plan(self):
+        self.set_mode("execute")
+        plan = self.latest_plan
+        if plan is None:
+            raise ProviderError("response", "没有可执行计划，请先 /plan 规划或直接提交任务。")
+        async with aclosing(
+            self.stream_turn("请立即执行以下最近计划，使用工具完成并验证：\n" + plan.reply.text)
+        ) as events:
+            async for event in events:
+                yield event
+
+    async def aclose(self):
+        if self._closed:
+            await self._close_done.wait()
+            return
+        self._closed = True
+        try:
+            self.cancel()
+            if self._stream is not None and not self._reading:
+                await self._stream.aclose()
+                self._busy = False
+                self._done.set()
+            await self._done.wait()
             await self._provider.aclose()
-            self._closed = True
             self._history.clear()
+            self._latest_plan = None
+        finally:
+            self._close_done.set()

@@ -7,7 +7,7 @@ import pytest
 from conftest import SSEStream, anthropic_parts, sse
 
 from mycode.errors import ProviderError
-from mycode.models import Message, ResponseCompleted, TextDelta, ThinkingDelta
+from mycode.models import Message, ProviderUsage, ResponseCompleted, TextDelta, ThinkingDelta
 from mycode.providers.anthropic import AnthropicProvider
 
 
@@ -20,6 +20,7 @@ async def test_streaming_real_sdk(make_http, config):
     client, requests = make_http([stream])
     provider = AnthropicProvider(claude_config(config), http_client=client)
     events = provider.stream([Message("user", "你好")])
+    assert isinstance(await anext(events), ProviderUsage)
     assert await anext(events) == TextDelta("开头")
     pending = asyncio.create_task(anext(events))
     await asyncio.wait_for(stream.waiting.wait(), 2)
@@ -50,6 +51,7 @@ async def test_thinking_streaming_and_native_history(make_http, config):
     client, requests = make_http([stream, SSEStream(anthropic_parts(thinking=True))])
     provider = AnthropicProvider(claude_config(config, thinking=True), http_client=client)
     events = provider.stream([Message("user", "问题")])
+    assert isinstance(await anext(events), ProviderUsage)
     assert await anext(events) == ThinkingDelta("先")
     pending = asyncio.create_task(anext(events))
     await asyncio.wait_for(stream.waiting.wait(), 2)
@@ -183,6 +185,7 @@ async def test_cancel_and_close(make_http, config):
     client, _ = make_http([stream])
     provider = AnthropicProvider(claude_config(config), http_client=client)
     events = provider.stream([Message("user", "hello")])
+    assert isinstance(await anext(events), ProviderUsage)
     assert await anext(events) == TextDelta("你好")
     pending = asyncio.create_task(anext(events))
     await asyncio.wait_for(stream.waiting.wait(), 2)
@@ -290,3 +293,13 @@ async def test_tool_protocol_order(make_http, config, mode):
     with pytest.raises(ProviderError):
         _ = [e async for e in p.stream([], allow_tools=True)]
     await p.aclose()
+
+
+async def test_usage_snapshots_and_system(make_http, config):
+    client, requests = make_http([SSEStream(anthropic_parts())])
+    provider = AnthropicProvider(claude_config(config), http_client=client)
+    events = [e async for e in provider.stream([Message("user", "任务")], system_prompt="规划")]
+    usages = [e.usage for e in events if isinstance(e, ProviderUsage)]
+    assert [(u.input_tokens, u.output_tokens) for u in usages] == [(10, 0), (10, 10)]
+    assert json.loads(requests[0].content)["system"] == "规划"
+    await provider.aclose()

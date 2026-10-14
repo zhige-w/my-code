@@ -18,6 +18,7 @@ class Provider(Protocol):
         *,
         tools: Sequence[ToolDefinition] = (),
         allow_tools: bool = False,
+        system_prompt: str = "",
     ) -> AsyncIterator[ProviderEvent]: ...
 
     async def aclose(self) -> None: ...

@@ -183,7 +183,7 @@ class FakeProvider:
         self.closed = False
 
     async def stream(
-        self, messages: Sequence[Message], *, tools=(), allow_tools=False
+        self, messages: Sequence[Message], *, tools=(), allow_tools=False, system_prompt=""
     ) -> AsyncIterator[ProviderEvent]:
         self.requests.append(tuple(messages))
         try:

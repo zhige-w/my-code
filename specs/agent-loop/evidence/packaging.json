@@ -1,0 +1,19 @@
+{
+  "status": "通过",
+  "wheel": "mycode-0.1.0-py3-none-any.whl",
+  "sha256": "f42dd0516400bf33a830d9c5ce2f109bc2710d94ccd552cfbcadab45c3513ccf",
+  "source_files_equal": true,
+  "required_files": [
+    "mycode/agent/__init__.py",
+    "mycode/agent/options.py",
+    "mycode/agent/events.py",
+    "mycode/agent/history.py",
+    "mycode/agent/mode.py",
+    "mycode/agent/collector.py",
+    "mycode/agent/loop.py",
+    "mycode/tools/scheduler.py",
+    "mycode/tui/app.tcss"
+  ],
+  "sdist_documents_equal": true,
+  "sdist_excludes_evidence": true
+}

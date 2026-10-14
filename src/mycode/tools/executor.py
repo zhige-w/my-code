@@ -37,10 +37,7 @@ class ToolExecutor:
             except KeyError:
                 raise ToolError("unknown_tool", f"未知工具：{call.name}") from None
             try:
-                arguments = strict_json(call.arguments_json)
-                Draft202012Validator(tool.definition.parameters).validate(arguments)
-                if not isinstance(arguments, dict):
-                    raise ValueError("参数必须为对象。")
+                arguments = self.validate_arguments(call)
             except (ValueError, ValidationError) as exc:
                 message = exc.message if isinstance(exc, ValidationError) else str(exc)
                 raise ToolError(
@@ -131,3 +128,11 @@ class ToolExecutor:
                 {},
                 ToolResultError("execution_error", "工具执行失败，请检查参数与环境。"),
             )
+
+    def validate_arguments(self, call: ToolCall):
+        tool = self.registry.get(call.name)
+        arguments = strict_json(call.arguments_json)
+        Draft202012Validator(tool.definition.parameters).validate(arguments)
+        if not isinstance(arguments, dict):
+            raise ValueError("参数必须为对象。")
+        return arguments
